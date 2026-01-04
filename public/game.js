@@ -21,6 +21,13 @@ let playerLevel = 1;
 let playerKills = 0;
 let playerFireRate = 500;
 
+let matchState = "LOBBY";
+let maxWaves = 3;
+let currentWave = 0;
+let totalTeamGold = 0;
+let lobbyPlayers = [];
+let pendingNewPlayers = [];
+
 class MainScene extends Phaser.Scene {
   constructor() {
     super("MainScene");
@@ -65,6 +72,7 @@ class MainScene extends Phaser.Scene {
     this.createUI();
 
     sceneReady = true;
+    this.gameplayEnabled = false;
 
     if (pendingPlayers) {
       myId = pendingPlayers.myId;
@@ -78,12 +86,36 @@ class MainScene extends Phaser.Scene {
           playerFireRate = p.fireRate || 500;
         }
       }
+      if (pendingPlayers.matchConfig) {
+        matchState = pendingPlayers.matchConfig.state;
+        maxWaves = pendingPlayers.matchConfig.maxWaves;
+        currentWave = pendingPlayers.matchConfig.currentWave;
+
+        if (matchState === "LOBBY") {
+          this.showLobby();
+        } else if (matchState === "PLAYING") {
+          this.showPlaying();
+        } else if (matchState === "VICTORY") {
+          this.showVictory(maxWaves, totalTeamGold);
+        }
+      } else {
+        this.showLobby();
+      }
       if (pendingPlayers.gameState) {
         this.coreHP = pendingPlayers.gameState.coreHP;
         this.wave = pendingPlayers.gameState.wave;
         this.syncMobs(pendingPlayers.gameState.mobs);
       }
       pendingPlayers = null;
+    } else {
+      this.showLobby();
+    }
+
+    if (pendingNewPlayers.length > 0) {
+      for (const playerInfo of pendingNewPlayers) {
+        this.addPlayer(playerInfo);
+      }
+      pendingNewPlayers = [];
     }
   }
 
@@ -250,6 +282,204 @@ class MainScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(200)
       .setVisible(false);
+
+    this.createLobbyUI();
+    this.createVictoryUI();
+  }
+
+  createLobbyUI() {
+    this.lobbyContainer = this.add.container(0, 0).setDepth(500);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0a0a15, 0.95);
+    bg.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.lobbyContainer.add(bg);
+
+    const titleText = this.add
+      .text(WORLD_WIDTH / 2, 80, "TOWER DEFENSE", {
+        fontFamily: "Arial Black",
+        fontSize: "48px",
+        color: "#4ecdc4",
+        stroke: "#000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    this.lobbyContainer.add(titleText);
+
+    const subtitleText = this.add
+      .text(WORLD_WIDTH / 2, 130, "Lobby - Esperando jugadores...", {
+        fontFamily: "Arial",
+        fontSize: "20px",
+        color: "#888",
+      })
+      .setOrigin(0.5);
+    this.lobbyContainer.add(subtitleText);
+
+    this.lobbyPlayersText = this.add
+      .text(WORLD_WIDTH / 2, 250, "", {
+        fontFamily: "Arial",
+        fontSize: "18px",
+        color: "#fff",
+        align: "center",
+        lineSpacing: 10,
+      })
+      .setOrigin(0.5, 0);
+    this.lobbyContainer.add(this.lobbyPlayersText);
+
+    const buttonBg = this.add.graphics();
+    buttonBg.fillStyle(0x27ae60, 1);
+    buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 450, 240, 60, 10);
+    this.lobbyContainer.add(buttonBg);
+
+    this.readyButtonText = this.add
+      .text(WORLD_WIDTH / 2, 480, "ESTOY LISTO", {
+        fontFamily: "Arial Black",
+        fontSize: "24px",
+        color: "#fff",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => {
+        buttonBg.clear();
+        buttonBg.fillStyle(0x2ecc71, 1);
+        buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 450, 240, 60, 10);
+      })
+      .on("pointerout", () => {
+        buttonBg.clear();
+        buttonBg.fillStyle(0x27ae60, 1);
+        buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 450, 240, 60, 10);
+      })
+      .on("pointerdown", () => {
+        socket.emit("toggleReady");
+      });
+    this.lobbyContainer.add(this.readyButtonText);
+
+    const infoText = this.add
+      .text(WORLD_WIDTH / 2, 540, "Sobrevive a " + maxWaves + " oleadas", {
+        fontFamily: "Arial",
+        fontSize: "16px",
+        color: "#666",
+      })
+      .setOrigin(0.5);
+    this.lobbyContainer.add(infoText);
+    this.lobbyInfoText = infoText;
+  }
+
+  createVictoryUI() {
+    this.victoryContainer = this.add
+      .container(0, 0)
+      .setDepth(500)
+      .setVisible(false);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0a150a, 0.95);
+    bg.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.victoryContainer.add(bg);
+
+    const titleText = this.add
+      .text(WORLD_WIDTH / 2, 120, "¡FELICIDADES!", {
+        fontFamily: "Arial Black",
+        fontSize: "56px",
+        color: "#2ecc71",
+        stroke: "#000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    this.victoryContainer.add(titleText);
+
+    this.victorySurviveText = this.add
+      .text(WORLD_WIDTH / 2, 200, "", {
+        fontFamily: "Arial",
+        fontSize: "24px",
+        color: "#fff",
+      })
+      .setOrigin(0.5);
+    this.victoryContainer.add(this.victorySurviveText);
+
+    this.victoryGoldText = this.add
+      .text(WORLD_WIDTH / 2, 280, "", {
+        fontFamily: "Arial Black",
+        fontSize: "32px",
+        color: "#f1c40f",
+        stroke: "#000",
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5);
+    this.victoryContainer.add(this.victoryGoldText);
+
+    const lobbyButtonBg = this.add.graphics();
+    lobbyButtonBg.fillStyle(0x3498db, 1);
+    lobbyButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 380, 240, 60, 10);
+    this.victoryContainer.add(lobbyButtonBg);
+
+    const lobbyButtonText = this.add
+      .text(WORLD_WIDTH / 2, 410, "VOLVER AL LOBBY", {
+        fontFamily: "Arial Black",
+        fontSize: "20px",
+        color: "#fff",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => {
+        lobbyButtonBg.clear();
+        lobbyButtonBg.fillStyle(0x5dade2, 1);
+        lobbyButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 380, 240, 60, 10);
+      })
+      .on("pointerout", () => {
+        lobbyButtonBg.clear();
+        lobbyButtonBg.fillStyle(0x3498db, 1);
+        lobbyButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 380, 240, 60, 10);
+      })
+      .on("pointerdown", () => {
+        socket.emit("resetGame");
+      });
+    this.victoryContainer.add(lobbyButtonText);
+  }
+
+  updateLobbyPlayers() {
+    let text = "";
+    for (const p of lobbyPlayers) {
+      const status = p.ready ? "✓ LISTO" : "Esperando...";
+      const color = p.ready ? "#2ecc71" : "#888";
+      const isMe = p.id === myId ? " (Tú)" : "";
+      text += `Jugador ${p.id.substring(0, 6)}${isMe}\n${status}\n\n`;
+    }
+    this.lobbyPlayersText.setText(text);
+  }
+
+  setGameplayEnabled(enabled) {
+    this.gameplayEnabled = enabled;
+
+    if (this.coreHPText) this.coreHPText.setVisible(enabled);
+    if (this.waveText) this.waveText.setVisible(enabled);
+    if (this.statsText) this.statsText.setVisible(enabled);
+    if (this.cooldownGraphics) this.cooldownGraphics.setVisible(enabled);
+    if (this.playerCountText) this.playerCountText.setVisible(enabled);
+    if (this.resetButton) this.resetButton.setVisible(enabled);
+  }
+
+  showLobby() {
+    matchState = "LOBBY";
+    this.lobbyContainer.setVisible(true);
+    this.victoryContainer.setVisible(false);
+    this.setGameplayEnabled(false);
+  }
+
+  showPlaying() {
+    matchState = "PLAYING";
+    this.lobbyContainer.setVisible(false);
+    this.victoryContainer.setVisible(false);
+    this.setGameplayEnabled(true);
+  }
+
+  showVictory(waves, gold) {
+    matchState = "VICTORY";
+    this.lobbyContainer.setVisible(false);
+    this.victoryContainer.setVisible(true);
+    this.setGameplayEnabled(false);
+
+    this.victorySurviveText.setText(`Sobrevivieron a ${waves} oleadas`);
+    this.victoryGoldText.setText(`Oro total del equipo: ${gold}`);
   }
 
   updateCooldownUI(time) {
@@ -494,6 +724,7 @@ class MainScene extends Phaser.Scene {
 
   update(time) {
     if (!this.myPlayer) return;
+    if (!this.gameplayEnabled) return;
 
     const input = {
       up: this.cursors.up.isDown || this.wasd.up.isDown,
@@ -517,7 +748,7 @@ class MainScene extends Phaser.Scene {
     this.updateArrows();
 
     this.coreHPText.setText(`Torre HP: ${this.coreHP}`);
-    this.waveText.setText(`Oleada: ${this.wave}`);
+    this.waveText.setText(`Oleada: ${this.wave}/${maxWaves}`);
     this.statsText.setText(
       `Oro: ${playerGold} | Nivel: ${playerLevel} | Kills: ${playerKills}`
     );
@@ -547,6 +778,19 @@ socket.on("currentPlayers", (data) => {
         playerFireRate = p.fireRate || 500;
       }
     }
+    if (data.matchConfig) {
+      matchState = data.matchConfig.state;
+      maxWaves = data.matchConfig.maxWaves;
+      currentWave = data.matchConfig.currentWave;
+
+      if (matchState === "LOBBY") {
+        gameScene.showLobby();
+      } else if (matchState === "PLAYING") {
+        gameScene.showPlaying();
+      } else if (matchState === "VICTORY") {
+        gameScene.showVictory(maxWaves, totalTeamGold);
+      }
+    }
     if (data.gameState) {
       gameScene.coreHP = data.gameState.coreHP;
       gameScene.wave = data.gameState.wave;
@@ -557,14 +801,43 @@ socket.on("currentPlayers", (data) => {
   }
 });
 
+socket.on("gameStateChanged", (data) => {
+  matchState = data.state;
+  currentWave = data.currentWave;
+  maxWaves = data.maxWaves;
+  totalTeamGold = data.totalGold || 0;
+  lobbyPlayers = data.players || [];
+
+  if (!sceneReady || !gameScene) return;
+
+  gameScene.updateLobbyPlayers();
+
+  if (data.state === "LOBBY") {
+    gameScene.showLobby();
+  } else if (data.state === "PLAYING") {
+    gameScene.showPlaying();
+    gameScene.resetLocalState();
+  } else if (data.state === "VICTORY") {
+    gameScene.showVictory(maxWaves, totalTeamGold);
+  }
+});
+
 socket.on("newPlayer", (playerInfo) => {
   if (sceneReady && gameScene) {
     gameScene.addPlayer(playerInfo);
+  } else {
+    pendingNewPlayers.push(playerInfo);
   }
 });
 
 socket.on("playerMoved", (playerInfo) => {
-  const sprite = players[playerInfo.id];
+  let sprite = players[playerInfo.id];
+
+  if (!sprite && sceneReady && gameScene) {
+    gameScene.addPlayer(playerInfo);
+    sprite = players[playerInfo.id];
+  }
+
   if (!sprite) return;
 
   const dx = playerInfo.x - sprite.x;
@@ -669,6 +942,7 @@ socket.on("gameReset", (data) => {
 
   gameScene.coreHP = data.gameState.coreHP;
   gameScene.wave = data.gameState.wave;
+  gameScene.showLobby();
 });
 
 const config = {

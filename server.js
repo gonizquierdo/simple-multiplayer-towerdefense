@@ -30,6 +30,12 @@ const players = {};
 let mobIdCounter = 0;
 let spawnIntervalId = null;
 
+const matchConfig = {
+  state: "LOBBY",
+  maxWaves: 3,
+  currentWave: 0,
+};
+
 const gameState = {
   coreHP: 100,
   wave: 1,
@@ -45,6 +51,7 @@ function getSpawnInterval() {
 }
 
 function spawnMob() {
+  if (matchConfig.state !== "PLAYING") return;
   if (gameState.gameOver) return;
   if (gameState.mobsSpawnedThisWave >= gameState.mobsPerWave) return;
 
@@ -103,21 +110,68 @@ function updateMobs() {
 }
 
 function checkWaveComplete() {
+  if (matchConfig.state !== "PLAYING") return;
   if (gameState.gameOver) return;
 
   const allSpawned = gameState.mobsSpawnedThisWave >= gameState.mobsPerWave;
   const allKilled = Object.keys(gameState.mobs).length === 0;
 
   if (allSpawned && allKilled) {
-    gameState.wave++;
+    matchConfig.currentWave++;
+    gameState.wave = matchConfig.currentWave;
+
+    if (matchConfig.currentWave > matchConfig.maxWaves) {
+      matchConfig.state = "VICTORY";
+      if (spawnIntervalId) {
+        clearInterval(spawnIntervalId);
+        spawnIntervalId = null;
+      }
+      emitGameStateChange();
+      return;
+    }
+
     gameState.mobsSpawnedThisWave = 0;
     gameState.mobsPerWave = 5 + Math.floor(gameState.wave / 2);
     startSpawner();
     io.emit("waveComplete", { wave: gameState.wave });
+    emitGameStateChange();
   }
 }
 
+function emitGameStateChange() {
+  const totalGold = Object.values(players).reduce((sum, p) => sum + p.gold, 0);
+  io.emit("gameStateChanged", {
+    state: matchConfig.state,
+    currentWave: matchConfig.currentWave,
+    maxWaves: matchConfig.maxWaves,
+    totalGold,
+    players: Object.values(players).map((p) => ({
+      id: p.id,
+      ready: p.ready,
+      gold: p.gold,
+      kills: p.kills,
+      level: p.level,
+    })),
+  });
+}
+
+function startGame() {
+  matchConfig.state = "PLAYING";
+  matchConfig.currentWave = 1;
+  gameState.wave = 1;
+  gameState.coreHP = 100;
+  gameState.mobs = {};
+  gameState.gameOver = false;
+  gameState.mobsSpawnedThisWave = 0;
+  gameState.mobsPerWave = 5;
+  mobIdCounter = 0;
+  startSpawner();
+  emitGameStateChange();
+}
+
 function resetGame() {
+  matchConfig.state = "LOBBY";
+  matchConfig.currentWave = 0;
   gameState.coreHP = 100;
   gameState.wave = 1;
   gameState.mobs = {};
@@ -126,11 +180,17 @@ function resetGame() {
   gameState.mobsPerWave = 5;
   mobIdCounter = 0;
 
+  if (spawnIntervalId) {
+    clearInterval(spawnIntervalId);
+    spawnIntervalId = null;
+  }
+
   for (const id in players) {
     players[id].gold = 0;
     players[id].kills = 0;
     players[id].level = 1;
     players[id].fireRate = 500;
+    players[id].ready = false;
 
     const spawnRadius = 100;
     const angle = Math.random() * Math.PI * 2;
@@ -138,7 +198,7 @@ function resetGame() {
     players[id].y = CORE_Y + Math.sin(angle) * spawnRadius;
   }
 
-  startSpawner();
+  emitGameStateChange();
 
   io.emit("gameReset", {
     players,
@@ -150,11 +210,11 @@ function resetGame() {
   });
 }
 
-startSpawner();
-
 setInterval(() => {
-  updateMobs();
-  checkWaveComplete();
+  if (matchConfig.state === "PLAYING") {
+    updateMobs();
+    checkWaveComplete();
+  }
 }, 1000 / 60);
 
 setInterval(() => {
@@ -163,6 +223,9 @@ setInterval(() => {
     wave: gameState.wave,
     mobs: gameState.mobs,
     gameOver: gameState.gameOver,
+    matchState: matchConfig.state,
+    currentWave: matchConfig.currentWave,
+    maxWaves: matchConfig.maxWaves,
   });
 }, 50);
 
@@ -179,11 +242,17 @@ io.on("connection", (socket) => {
     kills: 0,
     level: 1,
     fireRate: 500,
+    ready: false,
   };
 
   socket.emit("currentPlayers", {
     players,
     myId: socket.id,
+    matchConfig: {
+      state: matchConfig.state,
+      currentWave: matchConfig.currentWave,
+      maxWaves: matchConfig.maxWaves,
+    },
     gameState: {
       coreHP: gameState.coreHP,
       wave: gameState.wave,
@@ -191,6 +260,21 @@ io.on("connection", (socket) => {
     },
   });
   socket.broadcast.emit("newPlayer", players[socket.id]);
+  emitGameStateChange();
+
+  socket.on("toggleReady", () => {
+    const player = players[socket.id];
+    if (!player) return;
+    if (matchConfig.state !== "LOBBY") return;
+
+    player.ready = !player.ready;
+    emitGameStateChange();
+
+    const allPlayers = Object.values(players);
+    if (allPlayers.length > 0 && allPlayers.every((p) => p.ready)) {
+      startGame();
+    }
+  });
 
   socket.on("input", (input) => {
     const player = players[socket.id];
