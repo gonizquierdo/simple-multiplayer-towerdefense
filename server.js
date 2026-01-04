@@ -15,10 +15,9 @@ const SPEED = 4;
 const CORE_X = 400;
 const CORE_Y = 300;
 const MOB_SPEED = 1.2;
-const MOB_HP = 30;
-const ARROW_DAMAGE = 10;
+const ARROW_DAMAGE = 12;
 const GOLD_REWARD = 10;
-const KILLS_TO_LEVEL = 1;
+const KILLS_TO_LEVEL = 5;
 const BASE_SPAWN_INTERVAL = 2000;
 
 const WAYPOINTS = [
@@ -44,7 +43,18 @@ const gameState = {
   mobsSpawnedThisWave: 0,
   mobsKilledThisWave: 0,
   mobsPerWave: 5,
+  playersAtWaveStart: 1,
+  currentMobHP: 30,
 };
+
+function getWaveStats(wave, numPlayers) {
+  const playerCount = Math.max(1, numPlayers);
+  const mobHP = Math.floor(
+    30 * (1 + wave * 0.5) * (1 + (playerCount - 1) * 0.7)
+  );
+  const mobsPerWave = (5 + wave * 2) * playerCount;
+  return { mobHP, mobsPerWave };
+}
 
 function getSpawnInterval() {
   return Math.max(1000, BASE_SPAWN_INTERVAL - (gameState.wave - 1) * 300);
@@ -56,7 +66,7 @@ function spawnMob() {
   if (gameState.mobsSpawnedThisWave >= gameState.mobsPerWave) return;
 
   const id = `mob_${mobIdCounter++}`;
-  const hp = MOB_HP + Math.floor(gameState.wave * 5);
+  const hp = gameState.currentMobHP;
 
   gameState.mobs[id] = {
     id,
@@ -130,10 +140,22 @@ function checkWaveComplete() {
       return;
     }
 
+    const numPlayers = Object.keys(players).length;
+    const waveStats = getWaveStats(gameState.wave, numPlayers);
+
     gameState.mobsSpawnedThisWave = 0;
-    gameState.mobsPerWave = 5 + Math.floor(gameState.wave / 2);
+    gameState.mobsPerWave = waveStats.mobsPerWave;
+    gameState.currentMobHP = waveStats.mobHP;
+    gameState.playersAtWaveStart = numPlayers;
+
     startSpawner();
     io.emit("waveComplete", { wave: gameState.wave });
+    io.emit("waveStats", {
+      wave: gameState.wave,
+      mobHP: waveStats.mobHP,
+      totalMobs: waveStats.mobsPerWave,
+      numPlayers: numPlayers,
+    });
     emitGameStateChange();
   }
 }
@@ -163,10 +185,24 @@ function startGame() {
   gameState.mobs = {};
   gameState.gameOver = false;
   gameState.mobsSpawnedThisWave = 0;
-  gameState.mobsPerWave = 5;
   mobIdCounter = 0;
+
+  const numPlayers = Object.keys(players).length;
+  const waveStats = getWaveStats(1, numPlayers);
+
+  gameState.mobsPerWave = waveStats.mobsPerWave;
+  gameState.currentMobHP = waveStats.mobHP;
+  gameState.playersAtWaveStart = numPlayers;
+
   startSpawner();
   emitGameStateChange();
+
+  io.emit("waveStats", {
+    wave: 1,
+    mobHP: waveStats.mobHP,
+    totalMobs: waveStats.mobsPerWave,
+    numPlayers: numPlayers,
+  });
 }
 
 function resetGame() {
@@ -178,6 +214,8 @@ function resetGame() {
   gameState.gameOver = false;
   gameState.mobsSpawnedThisWave = 0;
   gameState.mobsPerWave = 5;
+  gameState.currentMobHP = 30;
+  gameState.playersAtWaveStart = 1;
   mobIdCounter = 0;
 
   if (spawnIntervalId) {

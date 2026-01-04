@@ -526,6 +526,59 @@ class MainScene extends Phaser.Scene {
     });
   }
 
+  showWaveAnnouncement(wave, mobHP, totalMobs, numPlayers) {
+    const waveTitle = this.add
+      .text(WORLD_WIDTH / 2, WORLD_HEIGHT / 2 - 40, `OLEADA ${wave}`, {
+        fontFamily: "Arial Black",
+        fontSize: "48px",
+        color: "#f39c12",
+        stroke: "#000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(300)
+      .setAlpha(0);
+
+    const waveDetails = this.add
+      .text(
+        WORLD_WIDTH / 2,
+        WORLD_HEIGHT / 2 + 20,
+        `${totalMobs} enemigos | HP: ${mobHP} | ${numPlayers} jugadores`,
+        {
+          fontFamily: "Arial",
+          fontSize: "18px",
+          color: "#fff",
+          stroke: "#000",
+          strokeThickness: 2,
+        }
+      )
+      .setOrigin(0.5)
+      .setDepth(300)
+      .setAlpha(0);
+
+    this.tweens.add({
+      targets: [waveTitle, waveDetails],
+      alpha: 1,
+      duration: 300,
+      ease: "Power2",
+      onComplete: () => {
+        this.time.delayedCall(2000, () => {
+          this.tweens.add({
+            targets: [waveTitle, waveDetails],
+            alpha: 0,
+            y: "-=30",
+            duration: 500,
+            ease: "Power2",
+            onComplete: () => {
+              waveTitle.destroy();
+              waveDetails.destroy();
+            },
+          });
+        });
+      },
+    });
+  }
+
   syncMobs(serverMobs) {
     for (const id in serverMobs) {
       const mobData = serverMobs[id];
@@ -557,8 +610,11 @@ class MainScene extends Phaser.Scene {
       sprite.hpBar.clear();
       sprite.hpBar.fillStyle(0x333333, 1);
       sprite.hpBar.fillRect(0, 0, 30, 4);
-      sprite.hpBar.fillStyle(0x2ecc71, 1);
-      sprite.hpBar.fillRect(0, 0, 30 * (mobData.hp / mobData.maxHp), 4);
+
+      const hpPercent = mobData.hp / mobData.maxHp;
+      const hpColor = hpPercent < 0.3 ? 0xe74c3c : 0x2ecc71;
+      sprite.hpBar.fillStyle(hpColor, 1);
+      sprite.hpBar.fillRect(0, 0, 30 * hpPercent, 4);
     }
 
     for (const id in mobSprites) {
@@ -911,6 +967,17 @@ socket.on("mobKilled", (data) => {
 socket.on("waveComplete", (data) => {
   if (gameScene) {
     gameScene.wave = data.wave;
+  }
+});
+
+socket.on("waveStats", (data) => {
+  if (gameScene && gameScene.gameplayEnabled) {
+    gameScene.showWaveAnnouncement(
+      data.wave,
+      data.mobHP,
+      data.totalMobs,
+      data.numPlayers
+    );
   }
 });
 
