@@ -32,6 +32,12 @@ let pendingNewPlayers = [];
 let currentRoomName = null;
 let joinedRoom = false;
 
+const UPGRADE_BASE_COST = 20;
+
+function getUpgradeCost(upgradeCount) {
+  return Math.floor(UPGRADE_BASE_COST * Math.pow(1.2, upgradeCount));
+}
+
 class MainScene extends Phaser.Scene {
   constructor() {
     super("MainScene");
@@ -558,11 +564,18 @@ class MainScene extends Phaser.Scene {
     this.shopContainer.add(this.damageButtonBg);
 
     this.damageButtonText = this.add
-      .text(WORLD_WIDTH / 2, 305, "Mejorar Daño (+4) - Costo: 100 Oro", {
-        fontFamily: "Arial Black",
-        fontSize: "18px",
-        color: "#fff",
-      })
+      .text(
+        WORLD_WIDTH / 2,
+        305,
+        "Mejorar Daño (+4) - Costo: " +
+          getUpgradeCost(playerDamageUpgrades) +
+          " Oro",
+        {
+          fontFamily: "Arial Black",
+          fontSize: "18px",
+          color: "#fff",
+        }
+      )
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on("pointerover", () => {

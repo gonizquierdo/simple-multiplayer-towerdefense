@@ -19,7 +19,7 @@ const GOLD_REWARD = 10;
 const KILLS_TO_LEVEL = 5;
 const BASE_SPAWN_INTERVAL = 2000;
 const BASE_DAMAGE = 10;
-const UPGRADE_BASE_COST = 100;
+const UPGRADE_BASE_COST = 20;
 
 const WAYPOINTS = [
   { x: 0, y: 300 },
@@ -321,7 +321,7 @@ function resetGame(roomName) {
 }
 
 function getUpgradeCost(upgradeCount) {
-  return Math.floor(UPGRADE_BASE_COST * Math.pow(1.5, upgradeCount));
+  return Math.floor(UPGRADE_BASE_COST * Math.pow(1.2, upgradeCount));
 }
 
 setInterval(() => {
