@@ -422,78 +422,141 @@ class MainScene extends Phaser.Scene {
     this.lobbyContainer = this.add.container(0, 0).setDepth(500);
 
     const bg = this.add.graphics();
-    bg.fillStyle(0x0a0a15, 0.95);
+    bg.fillStyle(0x0a0a15, 0.98);
     bg.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.lobbyContainer.add(bg);
 
+    const decorLine1 = this.add.graphics();
+    decorLine1.lineStyle(2, 0x4ecdc4, 0.3);
+    decorLine1.moveTo(50, 70);
+    decorLine1.lineTo(WORLD_WIDTH - 50, 70);
+    decorLine1.strokePath();
+    this.lobbyContainer.add(decorLine1);
+
     const titleText = this.add
-      .text(WORLD_WIDTH / 2, 80, "TOWER DEFENSE", {
+      .text(WORLD_WIDTH / 2, 45, "TOWER DEFENSE", {
         fontFamily: "Arial Black",
-        fontSize: "48px",
+        fontSize: "42px",
         color: "#4ecdc4",
         stroke: "#000",
-        strokeThickness: 4,
+        strokeThickness: 3,
       })
       .setOrigin(0.5);
     this.lobbyContainer.add(titleText);
 
-    const subtitleText = this.add
-      .text(WORLD_WIDTH / 2, 130, "Lobby - Esperando jugadores...", {
+    this.lobbyRoomNameText = this.add
+      .text(WORLD_WIDTH / 2, 95, "", {
+        fontFamily: "Arial Black",
+        fontSize: "22px",
+        color: "#f39c12",
+      })
+      .setOrigin(0.5);
+    this.lobbyContainer.add(this.lobbyRoomNameText);
+
+    this.lobbyPlayerCountText = this.add
+      .text(WORLD_WIDTH / 2, 130, "0/5 Jugadores", {
         fontFamily: "Arial",
-        fontSize: "20px",
+        fontSize: "18px",
         color: "#888",
       })
       .setOrigin(0.5);
-    this.lobbyContainer.add(subtitleText);
+    this.lobbyContainer.add(this.lobbyPlayerCountText);
 
-    this.lobbyPlayersText = this.add
-      .text(WORLD_WIDTH / 2, 250, "", {
-        fontFamily: "Arial",
-        fontSize: "18px",
-        color: "#fff",
-        align: "center",
-        lineSpacing: 10,
+    const panelBg = this.add.graphics();
+    panelBg.fillStyle(0x1a1a2e, 0.8);
+    panelBg.lineStyle(2, 0x4ecdc4, 0.5);
+    panelBg.fillRoundedRect(WORLD_WIDTH / 2 - 200, 160, 400, 260, 12);
+    panelBg.strokeRoundedRect(WORLD_WIDTH / 2 - 200, 160, 400, 260, 12);
+    this.lobbyContainer.add(panelBg);
+
+    const playersLabel = this.add
+      .text(WORLD_WIDTH / 2, 180, "JUGADORES", {
+        fontFamily: "Arial Black",
+        fontSize: "14px",
+        color: "#4ecdc4",
+        letterSpacing: 4,
       })
-      .setOrigin(0.5, 0);
-    this.lobbyContainer.add(this.lobbyPlayersText);
+      .setOrigin(0.5);
+    this.lobbyContainer.add(playersLabel);
+
+    this.lobbyPlayersContainer = this.add.container(0, 0);
+    this.lobbyContainer.add(this.lobbyPlayersContainer);
 
     const buttonBg = this.add.graphics();
     buttonBg.fillStyle(0x27ae60, 1);
-    buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 450, 240, 60, 10);
+    buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 130, 450, 260, 55, 8);
     this.lobbyContainer.add(buttonBg);
+    this.lobbyReadyButtonBg = buttonBg;
 
     this.readyButtonText = this.add
-      .text(WORLD_WIDTH / 2, 480, "ESTOY LISTO", {
+      .text(WORLD_WIDTH / 2, 477, "ESTOY LISTO", {
         fontFamily: "Arial Black",
-        fontSize: "24px",
+        fontSize: "22px",
         color: "#fff",
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on("pointerover", () => {
-        buttonBg.clear();
-        buttonBg.fillStyle(0x2ecc71, 1);
-        buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 450, 240, 60, 10);
+        this.lobbyReadyButtonBg.clear();
+        this.lobbyReadyButtonBg.fillStyle(0x2ecc71, 1);
+        this.lobbyReadyButtonBg.fillRoundedRect(
+          WORLD_WIDTH / 2 - 130,
+          450,
+          260,
+          55,
+          8
+        );
       })
       .on("pointerout", () => {
-        buttonBg.clear();
-        buttonBg.fillStyle(0x27ae60, 1);
-        buttonBg.fillRoundedRect(WORLD_WIDTH / 2 - 120, 450, 240, 60, 10);
+        this.lobbyReadyButtonBg.clear();
+        this.lobbyReadyButtonBg.fillStyle(0x27ae60, 1);
+        this.lobbyReadyButtonBg.fillRoundedRect(
+          WORLD_WIDTH / 2 - 130,
+          450,
+          260,
+          55,
+          8
+        );
       })
       .on("pointerdown", () => {
         socket.emit("toggleReady");
       });
     this.lobbyContainer.add(this.readyButtonText);
 
-    const infoText = this.add
-      .text(WORLD_WIDTH / 2, 540, "Sobrevive a " + maxWaves + " oleadas", {
-        fontFamily: "Arial",
-        fontSize: "16px",
-        color: "#666",
-      })
+    const decorLine2 = this.add.graphics();
+    decorLine2.lineStyle(2, 0x4ecdc4, 0.3);
+    decorLine2.moveTo(50, 530);
+    decorLine2.lineTo(WORLD_WIDTH - 50, 530);
+    decorLine2.strokePath();
+    this.lobbyContainer.add(decorLine2);
+
+    this.lobbyInfoText = this.add
+      .text(
+        WORLD_WIDTH / 2,
+        555,
+        "Sobrevive a " + maxWaves + " oleadas para ganar",
+        {
+          fontFamily: "Arial",
+          fontSize: "14px",
+          color: "#666",
+        }
+      )
       .setOrigin(0.5);
-    this.lobbyContainer.add(infoText);
-    this.lobbyInfoText = infoText;
+    this.lobbyContainer.add(this.lobbyInfoText);
+
+    const tipText = this.add
+      .text(
+        WORLD_WIDTH / 2,
+        580,
+        "Todos los jugadores deben estar listos para comenzar",
+        {
+          fontFamily: "Arial",
+          fontSize: "12px",
+          color: "#555",
+        }
+      )
+      .setOrigin(0.5);
+    this.lobbyContainer.add(tipText);
   }
 
   createShopUI() {
@@ -716,14 +779,91 @@ class MainScene extends Phaser.Scene {
   }
 
   updateLobbyPlayers() {
-    let text = "";
-    for (const p of lobbyPlayers) {
-      const status = p.ready ? "✓ LISTO" : "Esperando...";
-      const color = p.ready ? "#2ecc71" : "#888";
-      const isMe = p.id === myId ? " (Tú)" : "";
-      text += `Jugador ${p.id.substring(0, 6)}${isMe}\n${status}\n\n`;
+    this.lobbyPlayersContainer.removeAll(true);
+
+    const playerCount = lobbyPlayers.length;
+    const maxPlayers = 5;
+    this.lobbyPlayerCountText.setText(`${playerCount}/${maxPlayers} Jugadores`);
+
+    if (currentRoomName) {
+      this.lobbyRoomNameText.setText(`Sala: ${currentRoomName}`);
     }
-    this.lobbyPlayersText.setText(text);
+
+    const startY = 210;
+    const rowHeight = 45;
+
+    lobbyPlayers.forEach((p, index) => {
+      const y = startY + index * rowHeight;
+      const isMe = p.id === myId;
+
+      const rowBg = this.add.graphics();
+      if (isMe) {
+        rowBg.fillStyle(0x4ecdc4, 0.15);
+      } else {
+        rowBg.fillStyle(0x1a1a2e, 0.5);
+      }
+      rowBg.fillRoundedRect(WORLD_WIDTH / 2 - 180, y, 360, 38, 6);
+      this.lobbyPlayersContainer.add(rowBg);
+
+      const playerIcon = this.add.graphics();
+      playerIcon.fillStyle(isMe ? 0x4ecdc4 : 0x888888, 1);
+      playerIcon.fillCircle(WORLD_WIDTH / 2 - 150, y + 19, 12);
+      playerIcon.fillStyle(0x1a1a2e, 1);
+      playerIcon.fillCircle(WORLD_WIDTH / 2 - 150, y + 14, 5);
+      playerIcon.fillRoundedRect(WORLD_WIDTH / 2 - 157, y + 20, 14, 10, 3);
+      this.lobbyPlayersContainer.add(playerIcon);
+
+      const nameText = this.add
+        .text(
+          WORLD_WIDTH / 2 - 125,
+          y + 19,
+          `${p.id.substring(0, 8)}${isMe ? " (Tú)" : ""}`,
+          {
+            fontFamily: "Arial",
+            fontSize: "15px",
+            color: isMe ? "#4ecdc4" : "#fff",
+          }
+        )
+        .setOrigin(0, 0.5);
+      this.lobbyPlayersContainer.add(nameText);
+
+      const statusBg = this.add.graphics();
+      if (p.ready) {
+        statusBg.fillStyle(0x27ae60, 1);
+      } else {
+        statusBg.fillStyle(0x555555, 1);
+      }
+      statusBg.fillRoundedRect(WORLD_WIDTH / 2 + 80, y + 7, 80, 24, 4);
+      this.lobbyPlayersContainer.add(statusBg);
+
+      const statusText = this.add
+        .text(WORLD_WIDTH / 2 + 120, y + 19, p.ready ? "LISTO" : "ESPERA", {
+          fontFamily: "Arial Black",
+          fontSize: "11px",
+          color: "#fff",
+        })
+        .setOrigin(0.5);
+      this.lobbyPlayersContainer.add(statusText);
+    });
+
+    for (let i = playerCount; i < maxPlayers; i++) {
+      const y = startY + i * rowHeight;
+
+      const emptyRowBg = this.add.graphics();
+      emptyRowBg.lineStyle(1, 0x333333, 0.5);
+      emptyRowBg.strokeRoundedRect(WORLD_WIDTH / 2 - 180, y, 360, 38, 6);
+      this.lobbyPlayersContainer.add(emptyRowBg);
+
+      const emptyText = this.add
+        .text(WORLD_WIDTH / 2, y + 19, "Esperando jugador...", {
+          fontFamily: "Arial",
+          fontSize: "13px",
+          color: "#444",
+          fontStyle: "italic",
+        })
+        .setOrigin(0.5);
+      this.lobbyPlayersContainer.add(emptyText);
+    }
   }
 
   setGameplayEnabled(enabled) {
@@ -1146,6 +1286,12 @@ socket.on("joinedRoom", (data) => {
   currentRoomName = data.roomName;
   joinedRoom = true;
   console.log(`Joined room: ${data.roomName}`);
+});
+
+socket.on("roomFull", (data) => {
+  alert(
+    `La sala "${data.roomName}" está llena (máximo ${data.maxPlayers} jugadores). Intenta con otra sala.`
+  );
 });
 
 socket.on("currentPlayers", (data) => {

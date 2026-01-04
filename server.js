@@ -20,6 +20,7 @@ const KILLS_TO_LEVEL = 5;
 const BASE_SPAWN_INTERVAL = 2000;
 const BASE_DAMAGE = 10;
 const UPGRADE_BASE_COST = 20;
+const MAX_PLAYERS_PER_ROOM = 5;
 
 const WAYPOINTS = [
   { x: 0, y: 300 },
@@ -373,6 +374,11 @@ io.on("connection", (socket) => {
     let room = getRoom(roomName);
     if (!room) {
       room = createRoom(roomName);
+    }
+
+    if (Object.keys(room.players).length >= MAX_PLAYERS_PER_ROOM) {
+      socket.emit("roomFull", { roomName, maxPlayers: MAX_PLAYERS_PER_ROOM });
+      return;
     }
 
     socket.join(roomName);
