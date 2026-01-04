@@ -1,15 +1,25 @@
 const socket = io();
 
-const WORLD_WIDTH = 2000;
-const WORLD_HEIGHT = 2000;
-const GRID_SIZE = 50;
+const WORLD_WIDTH = 800;
+const WORLD_HEIGHT = 600;
 const PLAYER_SIZE = 32;
+const CORE_X = 400;
+const CORE_Y = 300;
+const ARROW_RANGE = 250;
+const ARROW_SPEED = 8;
 
 let myId = null;
 const players = {};
+const mobSprites = {};
 let pendingPlayers = null;
 let sceneReady = false;
 let gameScene = null;
+let lastShootTime = 0;
+
+let playerGold = 0;
+let playerLevel = 1;
+let playerKills = 0;
+let playerFireRate = 500;
 
 class MainScene extends Phaser.Scene {
   constructor() {
@@ -18,6 +28,10 @@ class MainScene extends Phaser.Scene {
     this.wasd = null;
     this.myPlayer = null;
     this.otherPlayers = null;
+    this.activeArrows = [];
+    this.coreHP = 100;
+    this.wave = 1;
+    this.cooldownGraphics = null;
   }
 
   preload() {
@@ -30,13 +44,13 @@ class MainScene extends Phaser.Scene {
   create() {
     gameScene = this;
 
-    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    this.drawGrid();
-    this.drawWorldBounds();
+    this.drawBackground();
+    this.drawCore();
 
     this.otherPlayers = this.physics.add.group();
+    this.mobGroup = this.add.group();
 
     this.createAnimations();
 
@@ -56,9 +70,57 @@ class MainScene extends Phaser.Scene {
       myId = pendingPlayers.myId;
       for (const id in pendingPlayers.players) {
         this.addPlayer(pendingPlayers.players[id]);
+        if (id === myId) {
+          const p = pendingPlayers.players[id];
+          playerGold = p.gold || 0;
+          playerLevel = p.level || 1;
+          playerKills = p.kills || 0;
+          playerFireRate = p.fireRate || 500;
+        }
+      }
+      if (pendingPlayers.gameState) {
+        this.coreHP = pendingPlayers.gameState.coreHP;
+        this.wave = pendingPlayers.gameState.wave;
+        this.syncMobs(pendingPlayers.gameState.mobs);
       }
       pendingPlayers = null;
     }
+  }
+
+  drawBackground() {
+    const graphics = this.add.graphics();
+    graphics.fillStyle(0x1a1a2e, 1);
+    graphics.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+    graphics.lineStyle(1, 0x2a2a4e, 0.3);
+    for (let x = 0; x <= WORLD_WIDTH; x += 40) {
+      graphics.moveTo(x, 0);
+      graphics.lineTo(x, WORLD_HEIGHT);
+    }
+    for (let y = 0; y <= WORLD_HEIGHT; y += 40) {
+      graphics.moveTo(0, y);
+      graphics.lineTo(WORLD_WIDTH, y);
+    }
+    graphics.strokePath();
+  }
+
+  drawCore() {
+    this.coreGraphics = this.add.graphics();
+    this.coreGraphics.fillStyle(0x4ecdc4, 1);
+    this.coreGraphics.fillCircle(CORE_X, CORE_Y, 40);
+    this.coreGraphics.lineStyle(4, 0x45b7aa, 1);
+    this.coreGraphics.strokeCircle(CORE_X, CORE_Y, 40);
+
+    this.coreGraphics.fillStyle(0x96f2ee, 1);
+    this.coreGraphics.fillCircle(CORE_X, CORE_Y, 20);
+
+    this.add
+      .text(CORE_X, CORE_Y - 60, "TORRE", {
+        fontFamily: "Arial Black",
+        fontSize: "16px",
+        color: "#4ecdc4",
+      })
+      .setOrigin(0.5);
   }
 
   createAnimations() {
@@ -97,39 +159,6 @@ class MainScene extends Phaser.Scene {
     });
   }
 
-  drawGrid() {
-    const graphics = this.add.graphics();
-
-    graphics.lineStyle(1, 0xe94560, 0.15);
-    for (let x = 0; x <= WORLD_WIDTH; x += GRID_SIZE) {
-      graphics.moveTo(x, 0);
-      graphics.lineTo(x, WORLD_HEIGHT);
-    }
-    for (let y = 0; y <= WORLD_HEIGHT; y += GRID_SIZE) {
-      graphics.moveTo(0, y);
-      graphics.lineTo(WORLD_WIDTH, y);
-    }
-    graphics.strokePath();
-
-    const majorGrid = GRID_SIZE * 4;
-    graphics.lineStyle(2, 0xe94560, 0.4);
-    for (let x = 0; x <= WORLD_WIDTH; x += majorGrid) {
-      graphics.moveTo(x, 0);
-      graphics.lineTo(x, WORLD_HEIGHT);
-    }
-    for (let y = 0; y <= WORLD_HEIGHT; y += majorGrid) {
-      graphics.moveTo(0, y);
-      graphics.lineTo(WORLD_HEIGHT, y);
-    }
-    graphics.strokePath();
-  }
-
-  drawWorldBounds() {
-    const graphics = this.add.graphics();
-    graphics.lineStyle(4, 0xe94560, 1);
-    graphics.strokeRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-  }
-
   addPlayer(playerInfo) {
     if (players[playerInfo.id]) return;
 
@@ -137,12 +166,12 @@ class MainScene extends Phaser.Scene {
     sprite.setCollideWorldBounds(true);
     sprite.playerId = playerInfo.id;
     sprite.anims.play("idle", true);
+    sprite.setDepth(10);
 
     const isMe = playerInfo.id === myId;
 
     if (isMe) {
       this.myPlayer = sprite;
-      this.cameras.main.startFollow(sprite, true, 0.1, 0.1);
     } else {
       this.otherPlayers.add(sprite);
     }
@@ -151,74 +180,319 @@ class MainScene extends Phaser.Scene {
   }
 
   createUI() {
+    this.coreHPText = this.add
+      .text(15, 15, "Torre HP: 100", {
+        fontFamily: "Arial Black",
+        fontSize: "18px",
+        color: "#4ecdc4",
+        stroke: "#000",
+        strokeThickness: 2,
+      })
+      .setDepth(100);
+
+    this.waveText = this.add
+      .text(15, 40, "Oleada: 1", {
+        fontFamily: "Arial Black",
+        fontSize: "18px",
+        color: "#f39c12",
+        stroke: "#000",
+        strokeThickness: 2,
+      })
+      .setDepth(100);
+
+    this.statsText = this.add
+      .text(WORLD_WIDTH - 15, 15, "Oro: 0 | Nivel: 1 | Kills: 0", {
+        fontFamily: "Arial Black",
+        fontSize: "16px",
+        color: "#f1c40f",
+        stroke: "#000",
+        strokeThickness: 2,
+      })
+      .setOrigin(1, 0)
+      .setDepth(100);
+
+    this.cooldownGraphics = this.add.graphics();
+    this.cooldownGraphics.setDepth(100);
+
     this.playerCountText = this.add
-      .text(15, 15, "Jugadores: 0", {
-        fontFamily: "Segoe UI, sans-serif",
+      .text(15, 65, "Jugadores: 0", {
+        fontFamily: "Arial",
         fontSize: "14px",
         color: "#ffffff",
       })
-      .setScrollFactor(0)
       .setDepth(100);
 
-    this.posText = this.add
-      .text(15, 35, "Pos: 0, 0", {
-        fontFamily: "Segoe UI, sans-serif",
-        fontSize: "14px",
-        color: "#ffffff",
+    this.resetButton = this.add
+      .text(WORLD_WIDTH / 2, WORLD_HEIGHT - 30, "[ REINICIAR PARTIDA ]", {
+        fontFamily: "Arial Black",
+        fontSize: "16px",
+        color: "#e74c3c",
+        stroke: "#000",
+        strokeThickness: 2,
       })
-      .setScrollFactor(0)
-      .setDepth(100);
+      .setOrigin(0.5)
+      .setDepth(100)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => this.resetButton.setColor("#ff6b6b"))
+      .on("pointerout", () => this.resetButton.setColor("#e74c3c"))
+      .on("pointerdown", () => {
+        socket.emit("resetGame");
+      });
 
-    this.createMinimap();
+    this.gameOverText = this.add
+      .text(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, "", {
+        fontFamily: "Arial Black",
+        fontSize: "48px",
+        color: "#e74c3c",
+        stroke: "#000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(200)
+      .setVisible(false);
   }
 
-  createMinimap() {
-    const mapSize = 120;
-    const mapX = 800 - mapSize - 15;
-    const mapY = 15;
+  updateCooldownUI(time) {
+    this.cooldownGraphics.clear();
 
-    this.minimapBg = this.add.graphics();
-    this.minimapBg.fillStyle(0x0a0a14, 0.8);
-    this.minimapBg.fillRect(mapX, mapY, mapSize, mapSize);
-    this.minimapBg.lineStyle(1, 0xe94560, 0.5);
-    this.minimapBg.strokeRect(mapX, mapY, mapSize, mapSize);
-    this.minimapBg.setScrollFactor(0).setDepth(100);
+    const elapsed = time - lastShootTime;
+    const progress = Math.min(1, elapsed / playerFireRate);
 
-    this.minimapDots = this.add.graphics();
-    this.minimapDots.setScrollFactor(0).setDepth(101);
+    const barX = WORLD_WIDTH - 150;
+    const barY = 45;
+    const barWidth = 135;
+    const barHeight = 8;
 
-    this.minimapView = this.add.graphics();
-    this.minimapView.setScrollFactor(0).setDepth(101);
+    this.cooldownGraphics.fillStyle(0x333333, 0.8);
+    this.cooldownGraphics.fillRect(barX, barY, barWidth, barHeight);
+
+    const color = progress >= 1 ? 0x2ecc71 : 0x3498db;
+    this.cooldownGraphics.fillStyle(color, 1);
+    this.cooldownGraphics.fillRect(barX, barY, barWidth * progress, barHeight);
+
+    this.cooldownGraphics.lineStyle(1, 0xffffff, 0.5);
+    this.cooldownGraphics.strokeRect(barX, barY, barWidth, barHeight);
   }
 
-  updateMinimap() {
-    const mapSize = 120;
-    const mapX = 800 - mapSize - 15;
-    const mapY = 15;
-    const scale = mapSize / WORLD_WIDTH;
+  showFloatingText(x, y, text, color = "#f1c40f") {
+    const floatingText = this.add
+      .text(x, y, text, {
+        fontFamily: "Arial Black",
+        fontSize: "18px",
+        color: color,
+        stroke: "#000",
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(150);
 
-    this.minimapDots.clear();
-    for (const id in players) {
-      const sprite = players[id];
-      if (!sprite.active) continue;
-      const px = mapX + sprite.x * scale;
-      const py = mapY + sprite.y * scale;
-      const color = id === myId ? 0xffffff : 0xe94560;
-      this.minimapDots.fillStyle(color, 1);
-      this.minimapDots.fillCircle(px, py, id === myId ? 3 : 2);
+    this.tweens.add({
+      targets: floatingText,
+      y: y - 50,
+      alpha: 0,
+      duration: 1000,
+      ease: "Power2",
+      onComplete: () => floatingText.destroy(),
+    });
+  }
+
+  syncMobs(serverMobs) {
+    for (const id in serverMobs) {
+      const mobData = serverMobs[id];
+
+      if (!mobSprites[id]) {
+        const graphics = this.add.graphics();
+        graphics.fillStyle(0xe74c3c, 1);
+        graphics.fillCircle(0, 0, 15);
+        graphics.lineStyle(2, 0xc0392b, 1);
+        graphics.strokeCircle(0, 0, 15);
+
+        const container = this.add.container(mobData.x, mobData.y, [graphics]);
+        container.mobId = id;
+        container.setDepth(5);
+
+        const hpBar = this.add.graphics();
+        hpBar.setPosition(-15, -25);
+        container.add(hpBar);
+        container.hpBar = hpBar;
+
+        this.mobGroup.add(container);
+        mobSprites[id] = container;
+      }
+
+      const sprite = mobSprites[id];
+      sprite.x = mobData.x;
+      sprite.y = mobData.y;
+
+      sprite.hpBar.clear();
+      sprite.hpBar.fillStyle(0x333333, 1);
+      sprite.hpBar.fillRect(0, 0, 30, 4);
+      sprite.hpBar.fillStyle(0x2ecc71, 1);
+      sprite.hpBar.fillRect(0, 0, 30 * (mobData.hp / mobData.maxHp), 4);
     }
 
-    this.minimapView.clear();
-    const cam = this.cameras.main;
-    const viewX = mapX + cam.scrollX * scale;
-    const viewY = mapY + cam.scrollY * scale;
-    const viewW = cam.width * scale;
-    const viewH = cam.height * scale;
-    this.minimapView.lineStyle(1, 0xffffff, 0.5);
-    this.minimapView.strokeRect(viewX, viewY, viewW, viewH);
+    for (const id in mobSprites) {
+      if (!serverMobs[id]) {
+        mobSprites[id].destroy();
+        delete mobSprites[id];
+      }
+    }
   }
 
-  update() {
+  findMobClosestToCore() {
+    if (!this.myPlayer) return null;
+
+    let bestMob = null;
+    let minDistToCore = Infinity;
+
+    for (const id in mobSprites) {
+      const mob = mobSprites[id];
+
+      const distToPlayer = Phaser.Math.Distance.Between(
+        this.myPlayer.x,
+        this.myPlayer.y,
+        mob.x,
+        mob.y
+      );
+
+      if (distToPlayer > ARROW_RANGE) continue;
+
+      const distToCore = Phaser.Math.Distance.Between(
+        mob.x,
+        mob.y,
+        CORE_X,
+        CORE_Y
+      );
+
+      if (distToCore < minDistToCore) {
+        minDistToCore = distToCore;
+        bestMob = mob;
+      }
+    }
+
+    return bestMob;
+  }
+
+  shootArrow(target, isLocal = true) {
+    if (!this.myPlayer && isLocal) return;
+
+    const startX = isLocal ? this.myPlayer.x : target.startX;
+    const startY = isLocal ? this.myPlayer.y : target.startY;
+    const targetX = target.x || target.targetX;
+    const targetY = target.y || target.targetY;
+
+    const angle = Phaser.Math.Angle.Between(startX, startY, targetX, targetY);
+
+    const arrow = this.add.graphics();
+    arrow.fillStyle(0xf1c40f, 1);
+    arrow.fillRect(-10, -2, 20, 4);
+    arrow.fillStyle(0xe67e22, 1);
+    arrow.beginPath();
+    arrow.moveTo(10, -4);
+    arrow.lineTo(16, 0);
+    arrow.lineTo(10, 4);
+    arrow.closePath();
+    arrow.fillPath();
+
+    arrow.x = startX;
+    arrow.y = startY;
+    arrow.rotation = angle;
+    arrow.setDepth(15);
+    arrow.targetMobId = target.mobId;
+    arrow.vx = Math.cos(angle) * ARROW_SPEED;
+    arrow.vy = Math.sin(angle) * ARROW_SPEED;
+    arrow.lifetime = 0;
+    arrow.isLocal = isLocal;
+
+    this.activeArrows.push(arrow);
+
+    if (isLocal) {
+      socket.emit("shootArrow", { targetX: targetX, targetY: targetY });
+    }
+  }
+
+  updateArrows() {
+    for (let i = this.activeArrows.length - 1; i >= 0; i--) {
+      const arrow = this.activeArrows[i];
+
+      arrow.x += arrow.vx;
+      arrow.y += arrow.vy;
+      arrow.lifetime++;
+
+      if (arrow.lifetime > 180) {
+        arrow.destroy();
+        this.activeArrows.splice(i, 1);
+        continue;
+      }
+
+      if (!arrow.isLocal) {
+        for (const id in mobSprites) {
+          const mob = mobSprites[id];
+          const dist = Phaser.Math.Distance.Between(
+            arrow.x,
+            arrow.y,
+            mob.x,
+            mob.y
+          );
+          if (dist < 20) {
+            arrow.destroy();
+            this.activeArrows.splice(i, 1);
+            break;
+          }
+        }
+        continue;
+      }
+
+      if (
+        arrow.x < 0 ||
+        arrow.x > WORLD_WIDTH ||
+        arrow.y < 0 ||
+        arrow.y > WORLD_HEIGHT
+      ) {
+        arrow.destroy();
+        this.activeArrows.splice(i, 1);
+        continue;
+      }
+
+      for (const id in mobSprites) {
+        const mob = mobSprites[id];
+        const dist = Phaser.Math.Distance.Between(
+          arrow.x,
+          arrow.y,
+          mob.x,
+          mob.y
+        );
+
+        if (dist < 20) {
+          socket.emit("arrowHit", { mobId: id });
+          arrow.destroy();
+          this.activeArrows.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
+  clearAllArrows() {
+    for (const arrow of this.activeArrows) {
+      arrow.destroy();
+    }
+    this.activeArrows = [];
+  }
+
+  resetLocalState() {
+    for (const id in mobSprites) {
+      mobSprites[id].destroy();
+      delete mobSprites[id];
+    }
+
+    this.clearAllArrows();
+
+    this.gameOverText.setVisible(false);
+    lastShootTime = 0;
+  }
+
+  update(time) {
     if (!this.myPlayer) return;
 
     const input = {
@@ -232,12 +506,31 @@ class MainScene extends Phaser.Scene {
       socket.emit("input", input);
     }
 
-    this.playerCountText.setText(`Jugadores: ${Object.keys(players).length}`);
-    this.posText.setText(
-      `Pos: ${Math.round(this.myPlayer.x)}, ${Math.round(this.myPlayer.y)}`
-    );
+    if (time - lastShootTime > playerFireRate) {
+      const target = this.findMobClosestToCore();
+      if (target) {
+        this.shootArrow(target);
+        lastShootTime = time;
+      }
+    }
 
-    this.updateMinimap();
+    this.updateArrows();
+
+    this.coreHPText.setText(`Torre HP: ${this.coreHP}`);
+    this.waveText.setText(`Oleada: ${this.wave}`);
+    this.statsText.setText(
+      `Oro: ${playerGold} | Nivel: ${playerLevel} | Kills: ${playerKills}`
+    );
+    this.playerCountText.setText(`Jugadores: ${Object.keys(players).length}`);
+    this.updateCooldownUI(time);
+
+    if (this.coreHP <= 30) {
+      this.coreHPText.setColor("#e74c3c");
+    } else if (this.coreHP <= 60) {
+      this.coreHPText.setColor("#f39c12");
+    } else {
+      this.coreHPText.setColor("#4ecdc4");
+    }
   }
 }
 
@@ -246,6 +539,18 @@ socket.on("currentPlayers", (data) => {
     myId = data.myId;
     for (const id in data.players) {
       gameScene.addPlayer(data.players[id]);
+      if (id === myId) {
+        const p = data.players[id];
+        playerGold = p.gold || 0;
+        playerLevel = p.level || 1;
+        playerKills = p.kills || 0;
+        playerFireRate = p.fireRate || 500;
+      }
+    }
+    if (data.gameState) {
+      gameScene.coreHP = data.gameState.coreHP;
+      gameScene.wave = data.gameState.wave;
+      gameScene.syncMobs(data.gameState.mobs);
     }
   } else {
     pendingPlayers = data;
@@ -268,22 +573,40 @@ socket.on("playerMoved", (playerInfo) => {
   sprite.setPosition(playerInfo.x, playerInfo.y);
 
   if (Math.abs(dx) > Math.abs(dy)) {
-    if (dx < 0) {
-      sprite.anims.play("left", true);
-    } else if (dx > 0) {
-      sprite.anims.play("right", true);
-    }
+    if (dx < 0) sprite.anims.play("left", true);
+    else if (dx > 0) sprite.anims.play("right", true);
   } else if (dy !== 0) {
-    if (dy < 0) {
-      sprite.anims.play("up", true);
-    } else {
-      sprite.anims.play("down", true);
-    }
+    if (dy < 0) sprite.anims.play("up", true);
+    else sprite.anims.play("down", true);
   }
 
   if (dx === 0 && dy === 0) {
     sprite.anims.play("idle", true);
   }
+});
+
+socket.on("playerUpdate", (data) => {
+  if (data.id === myId) {
+    playerGold = data.gold;
+    playerLevel = data.level;
+    playerKills = data.kills;
+    playerFireRate = data.fireRate;
+  }
+});
+
+socket.on("arrowFired", (data) => {
+  if (!sceneReady || !gameScene) return;
+  if (data.playerId === myId) return;
+
+  gameScene.shootArrow(
+    {
+      startX: data.startX,
+      startY: data.startY,
+      targetX: data.targetX,
+      targetY: data.targetY,
+    },
+    false
+  );
 });
 
 socket.on("playerDisconnected", (id) => {
@@ -293,11 +616,66 @@ socket.on("playerDisconnected", (id) => {
   }
 });
 
+socket.on("gameStateUpdate", (state) => {
+  if (!sceneReady || !gameScene) return;
+
+  gameScene.coreHP = state.coreHP;
+  gameScene.wave = state.wave;
+  gameScene.syncMobs(state.mobs);
+});
+
+socket.on("mobKilled", (data) => {
+  if (mobSprites[data.mobId]) {
+    mobSprites[data.mobId].destroy();
+    delete mobSprites[data.mobId];
+  }
+
+  if (data.by === myId && data.position && gameScene) {
+    gameScene.showFloatingText(data.position.x, data.position.y, "+10 Gold");
+  }
+});
+
+socket.on("waveComplete", (data) => {
+  if (gameScene) {
+    gameScene.wave = data.wave;
+  }
+});
+
+socket.on("gameOver", (data) => {
+  if (gameScene) {
+    gameScene.gameOverText.setText(`GAME OVER\nOleada: ${data.wave}`);
+    gameScene.gameOverText.setVisible(true);
+  }
+});
+
+socket.on("gameReset", (data) => {
+  if (!gameScene) return;
+
+  gameScene.resetLocalState();
+
+  for (const id in players) {
+    if (data.players[id]) {
+      players[id].setPosition(data.players[id].x, data.players[id].y);
+    }
+  }
+
+  if (data.players[myId]) {
+    const p = data.players[myId];
+    playerGold = p.gold;
+    playerLevel = p.level;
+    playerKills = p.kills;
+    playerFireRate = p.fireRate;
+  }
+
+  gameScene.coreHP = data.gameState.coreHP;
+  gameScene.wave = data.gameState.wave;
+});
+
 const config = {
   type: Phaser.AUTO,
   width: 800,
   height: 600,
-  backgroundColor: "#2d2d2d",
+  backgroundColor: "#1a1a2e",
   parent: document.body,
   physics: {
     default: "arcade",

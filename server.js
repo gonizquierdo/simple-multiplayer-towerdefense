@@ -8,22 +8,188 @@ const io = new Server(httpServer);
 
 app.use(express.static("public"));
 
-const players = {};
-const SPEED = 5;
-const WORLD_WIDTH = 2000;
-const WORLD_HEIGHT = 2000;
+const WORLD_WIDTH = 800;
+const WORLD_HEIGHT = 600;
 const PLAYER_SIZE = 32;
+const SPEED = 4;
+const CORE_X = 400;
+const CORE_Y = 300;
+const MOB_SPEED = 1.2;
+const MOB_HP = 30;
+const ARROW_DAMAGE = 10;
+const GOLD_REWARD = 10;
+const KILLS_TO_LEVEL = 1;
+const BASE_SPAWN_INTERVAL = 2000;
+
+const WAYPOINTS = [
+  { x: 0, y: 300 },
+  { x: 400, y: 300 },
+];
+
+const players = {};
+let mobIdCounter = 0;
+let spawnIntervalId = null;
+
+const gameState = {
+  coreHP: 100,
+  wave: 1,
+  mobs: {},
+  gameOver: false,
+  mobsSpawnedThisWave: 0,
+  mobsKilledThisWave: 0,
+  mobsPerWave: 5,
+};
+
+function getSpawnInterval() {
+  return Math.max(1000, BASE_SPAWN_INTERVAL - (gameState.wave - 1) * 300);
+}
+
+function spawnMob() {
+  if (gameState.gameOver) return;
+  if (gameState.mobsSpawnedThisWave >= gameState.mobsPerWave) return;
+
+  const id = `mob_${mobIdCounter++}`;
+  const hp = MOB_HP + Math.floor(gameState.wave * 5);
+
+  gameState.mobs[id] = {
+    id,
+    x: WAYPOINTS[0].x,
+    y: WAYPOINTS[0].y + (Math.random() * 100 - 50),
+    hp,
+    maxHp: hp,
+    waypointIndex: 0,
+    lastHitBy: null,
+  };
+
+  gameState.mobsSpawnedThisWave++;
+}
+
+function startSpawner() {
+  if (spawnIntervalId) clearInterval(spawnIntervalId);
+  spawnIntervalId = setInterval(spawnMob, getSpawnInterval());
+}
+
+function updateMobs() {
+  if (gameState.gameOver) return;
+
+  for (const id in gameState.mobs) {
+    const mob = gameState.mobs[id];
+    const targetWaypoint =
+      WAYPOINTS[mob.waypointIndex + 1] || WAYPOINTS[WAYPOINTS.length - 1];
+
+    const dx = targetWaypoint.x - mob.x;
+    const dy = targetWaypoint.y - mob.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 30) {
+      if (mob.waypointIndex < WAYPOINTS.length - 2) {
+        mob.waypointIndex++;
+      } else {
+        gameState.coreHP -= 10;
+        delete gameState.mobs[id];
+
+        if (gameState.coreHP <= 0) {
+          gameState.coreHP = 0;
+          gameState.gameOver = true;
+          io.emit("gameOver", { wave: gameState.wave });
+        }
+        continue;
+      }
+    }
+
+    mob.x += (dx / dist) * MOB_SPEED;
+    mob.y += (dy / dist) * MOB_SPEED;
+  }
+}
+
+function checkWaveComplete() {
+  if (gameState.gameOver) return;
+
+  const allSpawned = gameState.mobsSpawnedThisWave >= gameState.mobsPerWave;
+  const allKilled = Object.keys(gameState.mobs).length === 0;
+
+  if (allSpawned && allKilled) {
+    gameState.wave++;
+    gameState.mobsSpawnedThisWave = 0;
+    gameState.mobsPerWave = 5 + Math.floor(gameState.wave / 2);
+    startSpawner();
+    io.emit("waveComplete", { wave: gameState.wave });
+  }
+}
+
+function resetGame() {
+  gameState.coreHP = 100;
+  gameState.wave = 1;
+  gameState.mobs = {};
+  gameState.gameOver = false;
+  gameState.mobsSpawnedThisWave = 0;
+  gameState.mobsPerWave = 5;
+  mobIdCounter = 0;
+
+  for (const id in players) {
+    players[id].gold = 0;
+    players[id].kills = 0;
+    players[id].level = 1;
+    players[id].fireRate = 500;
+
+    const spawnRadius = 100;
+    const angle = Math.random() * Math.PI * 2;
+    players[id].x = CORE_X + Math.cos(angle) * spawnRadius;
+    players[id].y = CORE_Y + Math.sin(angle) * spawnRadius;
+  }
+
+  startSpawner();
+
+  io.emit("gameReset", {
+    players,
+    gameState: {
+      coreHP: gameState.coreHP,
+      wave: gameState.wave,
+      mobs: gameState.mobs,
+    },
+  });
+}
+
+startSpawner();
+
+setInterval(() => {
+  updateMobs();
+  checkWaveComplete();
+}, 1000 / 60);
+
+setInterval(() => {
+  io.emit("gameStateUpdate", {
+    coreHP: gameState.coreHP,
+    wave: gameState.wave,
+    mobs: gameState.mobs,
+    gameOver: gameState.gameOver,
+  });
+}, 50);
 
 io.on("connection", (socket) => {
   console.log(`Player connected: ${socket.id}`);
 
+  const spawnRadius = 100;
+  const angle = Math.random() * Math.PI * 2;
   players[socket.id] = {
     id: socket.id,
-    x: Math.random() * (WORLD_WIDTH - PLAYER_SIZE) + PLAYER_SIZE / 2,
-    y: Math.random() * (WORLD_HEIGHT - PLAYER_SIZE) + PLAYER_SIZE / 2,
+    x: CORE_X + Math.cos(angle) * spawnRadius,
+    y: CORE_Y + Math.sin(angle) * spawnRadius,
+    gold: 0,
+    kills: 0,
+    level: 1,
+    fireRate: 500,
   };
 
-  socket.emit("currentPlayers", { players, myId: socket.id });
+  socket.emit("currentPlayers", {
+    players,
+    myId: socket.id,
+    gameState: {
+      coreHP: gameState.coreHP,
+      wave: gameState.wave,
+      mobs: gameState.mobs,
+    },
+  });
   socket.broadcast.emit("newPlayer", players[socket.id]);
 
   socket.on("input", (input) => {
@@ -52,6 +218,61 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("shootArrow", (data) => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    socket.broadcast.emit("arrowFired", {
+      playerId: socket.id,
+      startX: player.x,
+      startY: player.y,
+      targetX: data.targetX,
+      targetY: data.targetY,
+    });
+  });
+
+  socket.on("arrowHit", (data) => {
+    const mob = gameState.mobs[data.mobId];
+    if (!mob) return;
+
+    mob.hp -= ARROW_DAMAGE;
+    mob.lastHitBy = socket.id;
+
+    if (mob.hp <= 0) {
+      const mobPosition = { x: mob.x, y: mob.y };
+      delete gameState.mobs[data.mobId];
+
+      const killer = players[mob.lastHitBy];
+      if (killer) {
+        killer.gold += GOLD_REWARD;
+        killer.kills += 1;
+
+        if (killer.kills % KILLS_TO_LEVEL === 0) {
+          killer.level += 1;
+          killer.fireRate = Math.max(500, killer.fireRate - 50);
+        }
+
+        io.emit("playerUpdate", {
+          id: killer.id,
+          gold: killer.gold,
+          kills: killer.kills,
+          level: killer.level,
+          fireRate: killer.fireRate,
+        });
+      }
+
+      io.emit("mobKilled", {
+        mobId: data.mobId,
+        by: mob.lastHitBy,
+        position: mobPosition,
+      });
+    }
+  });
+
+  socket.on("resetGame", () => {
+    resetGame();
+  });
+
   socket.on("disconnect", () => {
     console.log(`Player disconnected: ${socket.id}`);
     delete players[socket.id];
@@ -61,5 +282,5 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Tower Defense running on http://localhost:${PORT}`);
 });
