@@ -20,13 +20,17 @@ let playerGold = 0;
 let playerLevel = 1;
 let playerKills = 0;
 let playerFireRate = 500;
+let playerDamage = 10;
+let playerDamageUpgrades = 0;
 
-let matchState = "LOBBY";
+let matchState = "ROOM_SELECT";
 let maxWaves = 3;
 let currentWave = 0;
 let totalTeamGold = 0;
 let lobbyPlayers = [];
 let pendingNewPlayers = [];
+let currentRoomName = null;
+let joinedRoom = false;
 
 class MainScene extends Phaser.Scene {
   constructor() {
@@ -95,6 +99,8 @@ class MainScene extends Phaser.Scene {
           this.showLobby();
         } else if (matchState === "PLAYING") {
           this.showPlaying();
+        } else if (matchState === "SHOP") {
+          this.showShop();
         } else if (matchState === "VICTORY") {
           this.showVictory(maxWaves, totalTeamGold);
         }
@@ -108,7 +114,11 @@ class MainScene extends Phaser.Scene {
       }
       pendingPlayers = null;
     } else {
-      this.showLobby();
+      if (!joinedRoom) {
+        this.showRoomSelect();
+      } else {
+        this.showLobby();
+      }
     }
 
     if (pendingNewPlayers.length > 0) {
@@ -283,8 +293,123 @@ class MainScene extends Phaser.Scene {
       .setDepth(200)
       .setVisible(false);
 
+    this.createRoomSelectUI();
     this.createLobbyUI();
+    this.createShopUI();
     this.createVictoryUI();
+  }
+
+  createRoomSelectUI() {
+    this.roomSelectContainer = this.add.container(0, 0).setDepth(600);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0a0a15, 1);
+    bg.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.roomSelectContainer.add(bg);
+
+    const titleText = this.add
+      .text(WORLD_WIDTH / 2, 100, "TOWER DEFENSE", {
+        fontFamily: "Arial Black",
+        fontSize: "56px",
+        color: "#4ecdc4",
+        stroke: "#000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    this.roomSelectContainer.add(titleText);
+
+    const subtitleText = this.add
+      .text(WORLD_WIDTH / 2, 160, "Cooperativo Multijugador", {
+        fontFamily: "Arial",
+        fontSize: "20px",
+        color: "#888",
+      })
+      .setOrigin(0.5);
+    this.roomSelectContainer.add(subtitleText);
+
+    const labelText = this.add
+      .text(WORLD_WIDTH / 2, 260, "Nombre de la Sala:", {
+        fontFamily: "Arial",
+        fontSize: "18px",
+        color: "#fff",
+      })
+      .setOrigin(0.5);
+    this.roomSelectContainer.add(labelText);
+
+    const inputBg = this.add.graphics();
+    inputBg.fillStyle(0x1a1a2e, 1);
+    inputBg.lineStyle(2, 0x4ecdc4, 1);
+    inputBg.fillRoundedRect(WORLD_WIDTH / 2 - 150, 290, 300, 50, 8);
+    inputBg.strokeRoundedRect(WORLD_WIDTH / 2 - 150, 290, 300, 50, 8);
+    this.roomSelectContainer.add(inputBg);
+
+    this.roomInputText = this.add
+      .text(WORLD_WIDTH / 2, 315, "default", {
+        fontFamily: "Arial",
+        fontSize: "20px",
+        color: "#4ecdc4",
+      })
+      .setOrigin(0.5);
+    this.roomSelectContainer.add(this.roomInputText);
+
+    this.roomInputValue = "default";
+
+    const inputZone = this.add
+      .zone(WORLD_WIDTH / 2, 315, 300, 50)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerdown", () => {
+        const newName = prompt(
+          "Ingresa el nombre de la sala:",
+          this.roomInputValue
+        );
+        if (newName && newName.trim()) {
+          this.roomInputValue = newName.trim();
+          this.roomInputText.setText(this.roomInputValue);
+        }
+      });
+    this.roomSelectContainer.add(inputZone);
+
+    const joinButtonBg = this.add.graphics();
+    joinButtonBg.fillStyle(0x27ae60, 1);
+    joinButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 100, 380, 200, 60, 10);
+    this.roomSelectContainer.add(joinButtonBg);
+
+    const joinButtonText = this.add
+      .text(WORLD_WIDTH / 2, 410, "UNIRSE", {
+        fontFamily: "Arial Black",
+        fontSize: "24px",
+        color: "#fff",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => {
+        joinButtonBg.clear();
+        joinButtonBg.fillStyle(0x2ecc71, 1);
+        joinButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 100, 380, 200, 60, 10);
+      })
+      .on("pointerout", () => {
+        joinButtonBg.clear();
+        joinButtonBg.fillStyle(0x27ae60, 1);
+        joinButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 100, 380, 200, 60, 10);
+      })
+      .on("pointerdown", () => {
+        socket.emit("joinRoom", { roomName: this.roomInputValue });
+      });
+    this.roomSelectContainer.add(joinButtonText);
+
+    const infoText = this.add
+      .text(
+        WORLD_WIDTH / 2,
+        500,
+        "Escribe el mismo nombre que tus amigos para jugar juntos",
+        {
+          fontFamily: "Arial",
+          fontSize: "14px",
+          color: "#666",
+        }
+      )
+      .setOrigin(0.5);
+    this.roomSelectContainer.add(infoText);
   }
 
   createLobbyUI() {
@@ -363,6 +488,147 @@ class MainScene extends Phaser.Scene {
       .setOrigin(0.5);
     this.lobbyContainer.add(infoText);
     this.lobbyInfoText = infoText;
+  }
+
+  createShopUI() {
+    this.shopContainer = this.add
+      .container(0, 0)
+      .setDepth(500)
+      .setVisible(false);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0a0a15, 0.95);
+    bg.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.shopContainer.add(bg);
+
+    const titleText = this.add
+      .text(WORLD_WIDTH / 2, 60, "TIENDA ABIERTA", {
+        fontFamily: "Arial Black",
+        fontSize: "42px",
+        color: "#f1c40f",
+        stroke: "#000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    this.shopContainer.add(titleText);
+
+    const waveCompleteText = this.add
+      .text(
+        WORLD_WIDTH / 2,
+        110,
+        "Oleada completada - Prepárate para la siguiente",
+        {
+          fontFamily: "Arial",
+          fontSize: "18px",
+          color: "#888",
+        }
+      )
+      .setOrigin(0.5);
+    this.shopContainer.add(waveCompleteText);
+
+    this.shopGoldText = this.add
+      .text(WORLD_WIDTH / 2, 170, "Oro: 0", {
+        fontFamily: "Arial Black",
+        fontSize: "28px",
+        color: "#f1c40f",
+        stroke: "#000",
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5);
+    this.shopContainer.add(this.shopGoldText);
+
+    this.shopDamageText = this.add
+      .text(WORLD_WIDTH / 2, 210, "Daño actual: 10", {
+        fontFamily: "Arial",
+        fontSize: "20px",
+        color: "#e74c3c",
+      })
+      .setOrigin(0.5);
+    this.shopContainer.add(this.shopDamageText);
+
+    this.damageButtonBg = this.add.graphics();
+    this.damageButtonBg.fillStyle(0xe74c3c, 1);
+    this.damageButtonBg.fillRoundedRect(
+      WORLD_WIDTH / 2 - 180,
+      270,
+      360,
+      70,
+      10
+    );
+    this.shopContainer.add(this.damageButtonBg);
+
+    this.damageButtonText = this.add
+      .text(WORLD_WIDTH / 2, 305, "Mejorar Daño (+4) - Costo: 100 Oro", {
+        fontFamily: "Arial Black",
+        fontSize: "18px",
+        color: "#fff",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => {
+        this.damageButtonBg.clear();
+        this.damageButtonBg.fillStyle(0xc0392b, 1);
+        this.damageButtonBg.fillRoundedRect(
+          WORLD_WIDTH / 2 - 180,
+          270,
+          360,
+          70,
+          10
+        );
+      })
+      .on("pointerout", () => {
+        this.damageButtonBg.clear();
+        this.damageButtonBg.fillStyle(0xe74c3c, 1);
+        this.damageButtonBg.fillRoundedRect(
+          WORLD_WIDTH / 2 - 180,
+          270,
+          360,
+          70,
+          10
+        );
+      })
+      .on("pointerdown", () => {
+        socket.emit("buyUpgrade", { type: "damage" });
+      });
+    this.shopContainer.add(this.damageButtonText);
+
+    this.shopPlayersText = this.add
+      .text(WORLD_WIDTH / 2, 400, "", {
+        fontFamily: "Arial",
+        fontSize: "16px",
+        color: "#fff",
+        align: "center",
+      })
+      .setOrigin(0.5);
+    this.shopContainer.add(this.shopPlayersText);
+
+    const readyButtonBg = this.add.graphics();
+    readyButtonBg.fillStyle(0x27ae60, 1);
+    readyButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 160, 480, 320, 60, 10);
+    this.shopContainer.add(readyButtonBg);
+
+    const readyButtonText = this.add
+      .text(WORLD_WIDTH / 2, 510, "LISTO PARA SIGUIENTE OLEADA", {
+        fontFamily: "Arial Black",
+        fontSize: "18px",
+        color: "#fff",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => {
+        readyButtonBg.clear();
+        readyButtonBg.fillStyle(0x2ecc71, 1);
+        readyButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 160, 480, 320, 60, 10);
+      })
+      .on("pointerout", () => {
+        readyButtonBg.clear();
+        readyButtonBg.fillStyle(0x27ae60, 1);
+        readyButtonBg.fillRoundedRect(WORLD_WIDTH / 2 - 160, 480, 320, 60, 10);
+      })
+      .on("pointerdown", () => {
+        socket.emit("shopReady");
+      });
+    this.shopContainer.add(readyButtonText);
   }
 
   createVictoryUI() {
@@ -458,28 +724,70 @@ class MainScene extends Phaser.Scene {
     if (this.resetButton) this.resetButton.setVisible(enabled);
   }
 
+  showRoomSelect() {
+    matchState = "ROOM_SELECT";
+    this.roomSelectContainer.setVisible(true);
+    this.lobbyContainer.setVisible(false);
+    this.shopContainer.setVisible(false);
+    this.victoryContainer.setVisible(false);
+    this.setGameplayEnabled(false);
+  }
+
   showLobby() {
     matchState = "LOBBY";
+    this.roomSelectContainer.setVisible(false);
     this.lobbyContainer.setVisible(true);
+    this.shopContainer.setVisible(false);
     this.victoryContainer.setVisible(false);
     this.setGameplayEnabled(false);
   }
 
   showPlaying() {
     matchState = "PLAYING";
+    this.roomSelectContainer.setVisible(false);
     this.lobbyContainer.setVisible(false);
+    this.shopContainer.setVisible(false);
     this.victoryContainer.setVisible(false);
     this.setGameplayEnabled(true);
   }
 
+  showShop() {
+    matchState = "SHOP";
+    this.roomSelectContainer.setVisible(false);
+    this.lobbyContainer.setVisible(false);
+    this.shopContainer.setVisible(true);
+    this.victoryContainer.setVisible(false);
+    this.setGameplayEnabled(false);
+    this.updateShopUI();
+  }
+
   showVictory(waves, gold) {
     matchState = "VICTORY";
+    this.roomSelectContainer.setVisible(false);
     this.lobbyContainer.setVisible(false);
+    this.shopContainer.setVisible(false);
     this.victoryContainer.setVisible(true);
     this.setGameplayEnabled(false);
 
     this.victorySurviveText.setText(`Sobrevivieron a ${waves} oleadas`);
     this.victoryGoldText.setText(`Oro total del equipo: ${gold}`);
+  }
+
+  updateShopUI() {
+    const upgradeCost = Math.floor(100 * Math.pow(1.5, playerDamageUpgrades));
+    this.shopGoldText.setText(`Oro: ${playerGold}`);
+    this.shopDamageText.setText(`Daño actual: ${playerDamage}`);
+    this.damageButtonText.setText(
+      `Mejorar Daño (+4) - Costo: ${upgradeCost} Oro`
+    );
+
+    let playersText = "";
+    for (const p of lobbyPlayers) {
+      const status = p.shopReady ? "✓ LISTO" : "Comprando...";
+      const isMe = p.id === myId ? " (Tú)" : "";
+      playersText += `${p.id.substring(0, 6)}${isMe}: ${status}  `;
+    }
+    this.shopPlayersText.setText(playersText);
   }
 
   updateCooldownUI(time) {
@@ -806,7 +1114,7 @@ class MainScene extends Phaser.Scene {
     this.coreHPText.setText(`Torre HP: ${this.coreHP}`);
     this.waveText.setText(`Oleada: ${this.wave}/${maxWaves}`);
     this.statsText.setText(
-      `Oro: ${playerGold} | Nivel: ${playerLevel} | Kills: ${playerKills}`
+      `Oro: ${playerGold} | Daño: ${playerDamage} | Kills: ${playerKills}`
     );
     this.playerCountText.setText(`Jugadores: ${Object.keys(players).length}`);
     this.updateCooldownUI(time);
@@ -821,6 +1129,12 @@ class MainScene extends Phaser.Scene {
   }
 }
 
+socket.on("joinedRoom", (data) => {
+  currentRoomName = data.roomName;
+  joinedRoom = true;
+  console.log(`Joined room: ${data.roomName}`);
+});
+
 socket.on("currentPlayers", (data) => {
   if (sceneReady && gameScene) {
     myId = data.myId;
@@ -832,6 +1146,8 @@ socket.on("currentPlayers", (data) => {
         playerLevel = p.level || 1;
         playerKills = p.kills || 0;
         playerFireRate = p.fireRate || 500;
+        playerDamage = p.damage || 10;
+        playerDamageUpgrades = p.damageUpgrades || 0;
       }
     }
     if (data.matchConfig) {
@@ -843,6 +1159,8 @@ socket.on("currentPlayers", (data) => {
         gameScene.showLobby();
       } else if (matchState === "PLAYING") {
         gameScene.showPlaying();
+      } else if (matchState === "SHOP") {
+        gameScene.showShop();
       } else if (matchState === "VICTORY") {
         gameScene.showVictory(maxWaves, totalTeamGold);
       }
@@ -871,11 +1189,20 @@ socket.on("gameStateChanged", (data) => {
   if (data.state === "LOBBY") {
     gameScene.showLobby();
   } else if (data.state === "PLAYING") {
+    if (matchState !== "PLAYING") {
+      gameScene.resetLocalState();
+    }
     gameScene.showPlaying();
-    gameScene.resetLocalState();
+  } else if (data.state === "SHOP") {
+    gameScene.showShop();
   } else if (data.state === "VICTORY") {
     gameScene.showVictory(maxWaves, totalTeamGold);
   }
+});
+
+socket.on("shopOpened", (data) => {
+  if (!sceneReady || !gameScene) return;
+  gameScene.showShop();
 });
 
 socket.on("newPlayer", (playerInfo) => {
@@ -920,6 +1247,12 @@ socket.on("playerUpdate", (data) => {
     playerLevel = data.level;
     playerKills = data.kills;
     playerFireRate = data.fireRate;
+    playerDamage = data.damage || playerDamage;
+    playerDamageUpgrades = data.damageUpgrades || playerDamageUpgrades;
+
+    if (gameScene && matchState === "SHOP") {
+      gameScene.updateShopUI();
+    }
   }
 });
 
@@ -1005,6 +1338,8 @@ socket.on("gameReset", (data) => {
     playerLevel = p.level;
     playerKills = p.kills;
     playerFireRate = p.fireRate;
+    playerDamage = p.damage || 10;
+    playerDamageUpgrades = p.damageUpgrades || 0;
   }
 
   gameScene.coreHP = data.gameState.coreHP;

@@ -15,37 +15,57 @@ const SPEED = 4;
 const CORE_X = 400;
 const CORE_Y = 300;
 const MOB_SPEED = 1.2;
-const ARROW_DAMAGE = 12;
 const GOLD_REWARD = 10;
 const KILLS_TO_LEVEL = 5;
 const BASE_SPAWN_INTERVAL = 2000;
+const BASE_DAMAGE = 10;
+const UPGRADE_BASE_COST = 100;
 
 const WAYPOINTS = [
   { x: 0, y: 300 },
   { x: 400, y: 300 },
 ];
 
-const players = {};
-let mobIdCounter = 0;
-let spawnIntervalId = null;
+const rooms = {};
 
-const matchConfig = {
-  state: "LOBBY",
-  maxWaves: 3,
-  currentWave: 0,
-};
+function createRoom(roomName) {
+  rooms[roomName] = {
+    name: roomName,
+    players: {},
+    matchConfig: {
+      state: "LOBBY",
+      maxWaves: 3,
+      currentWave: 0,
+    },
+    gameState: {
+      coreHP: 100,
+      wave: 1,
+      mobs: {},
+      gameOver: false,
+      mobsSpawnedThisWave: 0,
+      mobsPerWave: 5,
+      playersAtWaveStart: 1,
+      currentMobHP: 30,
+    },
+    spawnIntervalId: null,
+    mobIdCounter: 0,
+  };
+  return rooms[roomName];
+}
 
-const gameState = {
-  coreHP: 100,
-  wave: 1,
-  mobs: {},
-  gameOver: false,
-  mobsSpawnedThisWave: 0,
-  mobsKilledThisWave: 0,
-  mobsPerWave: 5,
-  playersAtWaveStart: 1,
-  currentMobHP: 30,
-};
+function getRoom(roomName) {
+  return rooms[roomName] || null;
+}
+
+function deleteRoom(roomName) {
+  const room = rooms[roomName];
+  if (room) {
+    if (room.spawnIntervalId) {
+      clearInterval(room.spawnIntervalId);
+    }
+    delete rooms[roomName];
+  }
+}
 
 function getWaveStats(wave, numPlayers) {
   const playerCount = Math.max(1, numPlayers);
@@ -56,19 +76,21 @@ function getWaveStats(wave, numPlayers) {
   return { mobHP, mobsPerWave };
 }
 
-function getSpawnInterval() {
-  return Math.max(1000, BASE_SPAWN_INTERVAL - (gameState.wave - 1) * 300);
+function getSpawnInterval(room) {
+  return Math.max(1000, BASE_SPAWN_INTERVAL - (room.gameState.wave - 1) * 300);
 }
 
-function spawnMob() {
-  if (matchConfig.state !== "PLAYING") return;
-  if (gameState.gameOver) return;
-  if (gameState.mobsSpawnedThisWave >= gameState.mobsPerWave) return;
+function spawnMob(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
+  if (room.matchConfig.state !== "PLAYING") return;
+  if (room.gameState.gameOver) return;
+  if (room.gameState.mobsSpawnedThisWave >= room.gameState.mobsPerWave) return;
 
-  const id = `mob_${mobIdCounter++}`;
-  const hp = gameState.currentMobHP;
+  const id = `mob_${room.mobIdCounter++}`;
+  const hp = room.gameState.currentMobHP;
 
-  gameState.mobs[id] = {
+  room.gameState.mobs[id] = {
     id,
     x: WAYPOINTS[0].x,
     y: WAYPOINTS[0].y + (Math.random() * 100 - 50),
@@ -78,19 +100,26 @@ function spawnMob() {
     lastHitBy: null,
   };
 
-  gameState.mobsSpawnedThisWave++;
+  room.gameState.mobsSpawnedThisWave++;
 }
 
-function startSpawner() {
-  if (spawnIntervalId) clearInterval(spawnIntervalId);
-  spawnIntervalId = setInterval(spawnMob, getSpawnInterval());
+function startSpawner(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
+  if (room.spawnIntervalId) clearInterval(room.spawnIntervalId);
+  room.spawnIntervalId = setInterval(
+    () => spawnMob(roomName),
+    getSpawnInterval(room)
+  );
 }
 
-function updateMobs() {
-  if (gameState.gameOver) return;
+function updateMobs(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
+  if (room.gameState.gameOver) return;
 
-  for (const id in gameState.mobs) {
-    const mob = gameState.mobs[id];
+  for (const id in room.gameState.mobs) {
+    const mob = room.gameState.mobs[id];
     const targetWaypoint =
       WAYPOINTS[mob.waypointIndex + 1] || WAYPOINTS[WAYPOINTS.length - 1];
 
@@ -102,13 +131,13 @@ function updateMobs() {
       if (mob.waypointIndex < WAYPOINTS.length - 2) {
         mob.waypointIndex++;
       } else {
-        gameState.coreHP -= 10;
-        delete gameState.mobs[id];
+        room.gameState.coreHP -= 10;
+        delete room.gameState.mobs[id];
 
-        if (gameState.coreHP <= 0) {
-          gameState.coreHP = 0;
-          gameState.gameOver = true;
-          io.emit("gameOver", { wave: gameState.wave });
+        if (room.gameState.coreHP <= 0) {
+          room.gameState.coreHP = 0;
+          room.gameState.gameOver = true;
+          io.to(roomName).emit("gameOver", { wave: room.gameState.wave });
         }
         continue;
       }
@@ -119,85 +148,97 @@ function updateMobs() {
   }
 }
 
-function checkWaveComplete() {
-  if (matchConfig.state !== "PLAYING") return;
-  if (gameState.gameOver) return;
+function checkWaveComplete(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
+  if (room.matchConfig.state !== "PLAYING") return;
+  if (room.gameState.gameOver) return;
 
-  const allSpawned = gameState.mobsSpawnedThisWave >= gameState.mobsPerWave;
-  const allKilled = Object.keys(gameState.mobs).length === 0;
+  const allSpawned =
+    room.gameState.mobsSpawnedThisWave >= room.gameState.mobsPerWave;
+  const allKilled = Object.keys(room.gameState.mobs).length === 0;
 
   if (allSpawned && allKilled) {
-    matchConfig.currentWave++;
-    gameState.wave = matchConfig.currentWave;
+    room.matchConfig.currentWave++;
+    room.gameState.wave = room.matchConfig.currentWave;
 
-    if (matchConfig.currentWave > matchConfig.maxWaves) {
-      matchConfig.state = "VICTORY";
-      if (spawnIntervalId) {
-        clearInterval(spawnIntervalId);
-        spawnIntervalId = null;
+    if (room.matchConfig.currentWave > room.matchConfig.maxWaves) {
+      room.matchConfig.state = "VICTORY";
+      if (room.spawnIntervalId) {
+        clearInterval(room.spawnIntervalId);
+        room.spawnIntervalId = null;
       }
-      emitGameStateChange();
+      emitGameStateChange(roomName);
       return;
     }
 
-    const numPlayers = Object.keys(players).length;
-    const waveStats = getWaveStats(gameState.wave, numPlayers);
+    if (room.spawnIntervalId) {
+      clearInterval(room.spawnIntervalId);
+      room.spawnIntervalId = null;
+    }
 
-    gameState.mobsSpawnedThisWave = 0;
-    gameState.mobsPerWave = waveStats.mobsPerWave;
-    gameState.currentMobHP = waveStats.mobHP;
-    gameState.playersAtWaveStart = numPlayers;
+    room.matchConfig.state = "SHOP";
+    for (const id in room.players) {
+      room.players[id].shopReady = false;
+    }
 
-    startSpawner();
-    io.emit("waveComplete", { wave: gameState.wave });
-    io.emit("waveStats", {
-      wave: gameState.wave,
-      mobHP: waveStats.mobHP,
-      totalMobs: waveStats.mobsPerWave,
-      numPlayers: numPlayers,
+    io.to(roomName).emit("shopOpened", {
+      wave: room.gameState.wave,
+      nextWave: room.gameState.wave + 1,
     });
-    emitGameStateChange();
+    emitGameStateChange(roomName);
   }
 }
 
-function emitGameStateChange() {
-  const totalGold = Object.values(players).reduce((sum, p) => sum + p.gold, 0);
-  io.emit("gameStateChanged", {
-    state: matchConfig.state,
-    currentWave: matchConfig.currentWave,
-    maxWaves: matchConfig.maxWaves,
+function emitGameStateChange(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
+
+  const totalGold = Object.values(room.players).reduce(
+    (sum, p) => sum + p.gold,
+    0
+  );
+  io.to(roomName).emit("gameStateChanged", {
+    state: room.matchConfig.state,
+    currentWave: room.matchConfig.currentWave,
+    maxWaves: room.matchConfig.maxWaves,
     totalGold,
-    players: Object.values(players).map((p) => ({
+    players: Object.values(room.players).map((p) => ({
       id: p.id,
       ready: p.ready,
+      shopReady: p.shopReady,
       gold: p.gold,
       kills: p.kills,
       level: p.level,
+      damage: p.damage,
     })),
   });
 }
 
-function startGame() {
-  matchConfig.state = "PLAYING";
-  matchConfig.currentWave = 1;
-  gameState.wave = 1;
-  gameState.coreHP = 100;
-  gameState.mobs = {};
-  gameState.gameOver = false;
-  gameState.mobsSpawnedThisWave = 0;
-  mobIdCounter = 0;
+function startGame(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
 
-  const numPlayers = Object.keys(players).length;
+  room.matchConfig.state = "PLAYING";
+  room.matchConfig.currentWave = 1;
+  room.gameState.wave = 1;
+  room.gameState.coreHP = 100;
+  room.gameState.mobs = {};
+  room.gameState.gameOver = false;
+  room.gameState.mobsSpawnedThisWave = 0;
+  room.mobIdCounter = 0;
+
+  const numPlayers = Object.keys(room.players).length;
   const waveStats = getWaveStats(1, numPlayers);
 
-  gameState.mobsPerWave = waveStats.mobsPerWave;
-  gameState.currentMobHP = waveStats.mobHP;
-  gameState.playersAtWaveStart = numPlayers;
+  room.gameState.mobsPerWave = waveStats.mobsPerWave;
+  room.gameState.currentMobHP = waveStats.mobHP;
+  room.gameState.playersAtWaveStart = numPlayers;
 
-  startSpawner();
-  emitGameStateChange();
+  startSpawner(roomName);
+  emitGameStateChange(roomName);
 
-  io.emit("waveStats", {
+  io.to(roomName).emit("waveStats", {
     wave: 1,
     mobHP: waveStats.mobHP,
     totalMobs: waveStats.mobsPerWave,
@@ -205,117 +246,240 @@ function startGame() {
   });
 }
 
-function resetGame() {
-  matchConfig.state = "LOBBY";
-  matchConfig.currentWave = 0;
-  gameState.coreHP = 100;
-  gameState.wave = 1;
-  gameState.mobs = {};
-  gameState.gameOver = false;
-  gameState.mobsSpawnedThisWave = 0;
-  gameState.mobsPerWave = 5;
-  gameState.currentMobHP = 30;
-  gameState.playersAtWaveStart = 1;
-  mobIdCounter = 0;
+function startNextWave(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
 
-  if (spawnIntervalId) {
-    clearInterval(spawnIntervalId);
-    spawnIntervalId = null;
+  room.matchConfig.state = "PLAYING";
+
+  const numPlayers = Object.keys(room.players).length;
+  const waveStats = getWaveStats(room.gameState.wave, numPlayers);
+
+  room.gameState.mobsSpawnedThisWave = 0;
+  room.gameState.mobsPerWave = waveStats.mobsPerWave;
+  room.gameState.currentMobHP = waveStats.mobHP;
+  room.gameState.playersAtWaveStart = numPlayers;
+
+  startSpawner(roomName);
+  io.to(roomName).emit("waveComplete", { wave: room.gameState.wave });
+  io.to(roomName).emit("waveStats", {
+    wave: room.gameState.wave,
+    mobHP: waveStats.mobHP,
+    totalMobs: waveStats.mobsPerWave,
+    numPlayers: numPlayers,
+  });
+  emitGameStateChange(roomName);
+}
+
+function resetGame(roomName) {
+  const room = getRoom(roomName);
+  if (!room) return;
+
+  room.matchConfig.state = "LOBBY";
+  room.matchConfig.currentWave = 0;
+  room.gameState.coreHP = 100;
+  room.gameState.wave = 1;
+  room.gameState.mobs = {};
+  room.gameState.gameOver = false;
+  room.gameState.mobsSpawnedThisWave = 0;
+  room.gameState.mobsPerWave = 5;
+  room.gameState.currentMobHP = 30;
+  room.gameState.playersAtWaveStart = 1;
+  room.mobIdCounter = 0;
+
+  if (room.spawnIntervalId) {
+    clearInterval(room.spawnIntervalId);
+    room.spawnIntervalId = null;
   }
 
-  for (const id in players) {
-    players[id].gold = 0;
-    players[id].kills = 0;
-    players[id].level = 1;
-    players[id].fireRate = 500;
-    players[id].ready = false;
+  for (const id in room.players) {
+    room.players[id].gold = 0;
+    room.players[id].kills = 0;
+    room.players[id].level = 1;
+    room.players[id].fireRate = 500;
+    room.players[id].ready = false;
+    room.players[id].shopReady = false;
+    room.players[id].damage = BASE_DAMAGE;
+    room.players[id].damageUpgrades = 0;
 
     const spawnRadius = 100;
     const angle = Math.random() * Math.PI * 2;
-    players[id].x = CORE_X + Math.cos(angle) * spawnRadius;
-    players[id].y = CORE_Y + Math.sin(angle) * spawnRadius;
+    room.players[id].x = CORE_X + Math.cos(angle) * spawnRadius;
+    room.players[id].y = CORE_Y + Math.sin(angle) * spawnRadius;
   }
 
-  emitGameStateChange();
+  emitGameStateChange(roomName);
 
-  io.emit("gameReset", {
-    players,
+  io.to(roomName).emit("gameReset", {
+    players: room.players,
     gameState: {
-      coreHP: gameState.coreHP,
-      wave: gameState.wave,
-      mobs: gameState.mobs,
+      coreHP: room.gameState.coreHP,
+      wave: room.gameState.wave,
+      mobs: room.gameState.mobs,
     },
   });
 }
 
+function getUpgradeCost(upgradeCount) {
+  return Math.floor(UPGRADE_BASE_COST * Math.pow(1.5, upgradeCount));
+}
+
 setInterval(() => {
-  if (matchConfig.state === "PLAYING") {
-    updateMobs();
-    checkWaveComplete();
+  for (const roomName in rooms) {
+    const room = rooms[roomName];
+    if (room.matchConfig.state === "PLAYING") {
+      updateMobs(roomName);
+      checkWaveComplete(roomName);
+    }
   }
 }, 1000 / 60);
 
 setInterval(() => {
-  io.emit("gameStateUpdate", {
-    coreHP: gameState.coreHP,
-    wave: gameState.wave,
-    mobs: gameState.mobs,
-    gameOver: gameState.gameOver,
-    matchState: matchConfig.state,
-    currentWave: matchConfig.currentWave,
-    maxWaves: matchConfig.maxWaves,
-  });
+  for (const roomName in rooms) {
+    const room = rooms[roomName];
+    io.to(roomName).emit("gameStateUpdate", {
+      coreHP: room.gameState.coreHP,
+      wave: room.gameState.wave,
+      mobs: room.gameState.mobs,
+      gameOver: room.gameState.gameOver,
+      matchState: room.matchConfig.state,
+      currentWave: room.matchConfig.currentWave,
+      maxWaves: room.matchConfig.maxWaves,
+    });
+  }
 }, 50);
 
 io.on("connection", (socket) => {
   console.log(`Player connected: ${socket.id}`);
+  socket.roomName = null;
 
-  const spawnRadius = 100;
-  const angle = Math.random() * Math.PI * 2;
-  players[socket.id] = {
-    id: socket.id,
-    x: CORE_X + Math.cos(angle) * spawnRadius,
-    y: CORE_Y + Math.sin(angle) * spawnRadius,
-    gold: 0,
-    kills: 0,
-    level: 1,
-    fireRate: 500,
-    ready: false,
-  };
+  socket.on("joinRoom", (data) => {
+    const roomName = data.roomName || "default";
 
-  socket.emit("currentPlayers", {
-    players,
-    myId: socket.id,
-    matchConfig: {
-      state: matchConfig.state,
-      currentWave: matchConfig.currentWave,
-      maxWaves: matchConfig.maxWaves,
-    },
-    gameState: {
-      coreHP: gameState.coreHP,
-      wave: gameState.wave,
-      mobs: gameState.mobs,
-    },
+    if (socket.roomName) {
+      const oldRoom = getRoom(socket.roomName);
+      if (oldRoom && oldRoom.players[socket.id]) {
+        delete oldRoom.players[socket.id];
+        socket.leave(socket.roomName);
+        io.to(socket.roomName).emit("playerDisconnected", socket.id);
+        emitGameStateChange(socket.roomName);
+
+        if (Object.keys(oldRoom.players).length === 0) {
+          deleteRoom(socket.roomName);
+        }
+      }
+    }
+
+    let room = getRoom(roomName);
+    if (!room) {
+      room = createRoom(roomName);
+    }
+
+    socket.join(roomName);
+    socket.roomName = roomName;
+
+    const spawnRadius = 100;
+    const angle = Math.random() * Math.PI * 2;
+    room.players[socket.id] = {
+      id: socket.id,
+      x: CORE_X + Math.cos(angle) * spawnRadius,
+      y: CORE_Y + Math.sin(angle) * spawnRadius,
+      gold: 0,
+      kills: 0,
+      level: 1,
+      fireRate: 500,
+      ready: false,
+      shopReady: false,
+      damage: BASE_DAMAGE,
+      damageUpgrades: 0,
+    };
+
+    socket.emit("joinedRoom", { roomName });
+
+    socket.emit("currentPlayers", {
+      players: room.players,
+      myId: socket.id,
+      matchConfig: {
+        state: room.matchConfig.state,
+        currentWave: room.matchConfig.currentWave,
+        maxWaves: room.matchConfig.maxWaves,
+      },
+      gameState: {
+        coreHP: room.gameState.coreHP,
+        wave: room.gameState.wave,
+        mobs: room.gameState.mobs,
+      },
+    });
+
+    socket.to(roomName).emit("newPlayer", room.players[socket.id]);
+    emitGameStateChange(roomName);
   });
-  socket.broadcast.emit("newPlayer", players[socket.id]);
-  emitGameStateChange();
 
   socket.on("toggleReady", () => {
-    const player = players[socket.id];
+    const room = getRoom(socket.roomName);
+    if (!room) return;
+    const player = room.players[socket.id];
     if (!player) return;
-    if (matchConfig.state !== "LOBBY") return;
+    if (room.matchConfig.state !== "LOBBY") return;
 
     player.ready = !player.ready;
-    emitGameStateChange();
+    emitGameStateChange(socket.roomName);
 
-    const allPlayers = Object.values(players);
+    const allPlayers = Object.values(room.players);
     if (allPlayers.length > 0 && allPlayers.every((p) => p.ready)) {
-      startGame();
+      startGame(socket.roomName);
+    }
+  });
+
+  socket.on("shopReady", () => {
+    const room = getRoom(socket.roomName);
+    if (!room) return;
+    const player = room.players[socket.id];
+    if (!player) return;
+    if (room.matchConfig.state !== "SHOP") return;
+
+    player.shopReady = !player.shopReady;
+    emitGameStateChange(socket.roomName);
+
+    const allPlayers = Object.values(room.players);
+    if (allPlayers.length > 0 && allPlayers.every((p) => p.shopReady)) {
+      startNextWave(socket.roomName);
+    }
+  });
+
+  socket.on("buyUpgrade", (data) => {
+    const room = getRoom(socket.roomName);
+    if (!room) return;
+    const player = room.players[socket.id];
+    if (!player) return;
+    if (room.matchConfig.state !== "SHOP") return;
+
+    const upgradeType = data.type || "damage";
+
+    if (upgradeType === "damage") {
+      const cost = getUpgradeCost(player.damageUpgrades);
+      if (player.gold >= cost) {
+        player.gold -= cost;
+        player.damage += 4;
+        player.damageUpgrades++;
+
+        io.to(socket.roomName).emit("playerUpdate", {
+          id: player.id,
+          gold: player.gold,
+          kills: player.kills,
+          level: player.level,
+          fireRate: player.fireRate,
+          damage: player.damage,
+          damageUpgrades: player.damageUpgrades,
+        });
+      }
     }
   });
 
   socket.on("input", (input) => {
-    const player = players[socket.id];
+    const room = getRoom(socket.roomName);
+    if (!room) return;
+    const player = room.players[socket.id];
     if (!player) return;
 
     const prevX = player.x;
@@ -336,15 +500,17 @@ io.on("connection", (socket) => {
     );
 
     if (player.x !== prevX || player.y !== prevY) {
-      io.emit("playerMoved", player);
+      io.to(socket.roomName).emit("playerMoved", player);
     }
   });
 
   socket.on("shootArrow", (data) => {
-    const player = players[socket.id];
+    const room = getRoom(socket.roomName);
+    if (!room) return;
+    const player = room.players[socket.id];
     if (!player) return;
 
-    socket.broadcast.emit("arrowFired", {
+    socket.to(socket.roomName).emit("arrowFired", {
       playerId: socket.id,
       startX: player.x,
       startY: player.y,
@@ -354,36 +520,43 @@ io.on("connection", (socket) => {
   });
 
   socket.on("arrowHit", (data) => {
-    const mob = gameState.mobs[data.mobId];
+    const room = getRoom(socket.roomName);
+    if (!room) return;
+    const player = room.players[socket.id];
+    if (!player) return;
+
+    const mob = room.gameState.mobs[data.mobId];
     if (!mob) return;
 
-    mob.hp -= ARROW_DAMAGE;
+    mob.hp -= player.damage;
     mob.lastHitBy = socket.id;
 
     if (mob.hp <= 0) {
       const mobPosition = { x: mob.x, y: mob.y };
-      delete gameState.mobs[data.mobId];
+      delete room.gameState.mobs[data.mobId];
 
-      const killer = players[mob.lastHitBy];
+      const killer = room.players[mob.lastHitBy];
       if (killer) {
         killer.gold += GOLD_REWARD;
         killer.kills += 1;
 
         if (killer.kills % KILLS_TO_LEVEL === 0) {
           killer.level += 1;
-          killer.fireRate = Math.max(500, killer.fireRate - 50);
+          killer.fireRate = Math.max(300, killer.fireRate - 30);
         }
 
-        io.emit("playerUpdate", {
+        io.to(socket.roomName).emit("playerUpdate", {
           id: killer.id,
           gold: killer.gold,
           kills: killer.kills,
           level: killer.level,
           fireRate: killer.fireRate,
+          damage: killer.damage,
+          damageUpgrades: killer.damageUpgrades,
         });
       }
 
-      io.emit("mobKilled", {
+      io.to(socket.roomName).emit("mobKilled", {
         mobId: data.mobId,
         by: mob.lastHitBy,
         position: mobPosition,
@@ -392,13 +565,25 @@ io.on("connection", (socket) => {
   });
 
   socket.on("resetGame", () => {
-    resetGame();
+    if (socket.roomName) {
+      resetGame(socket.roomName);
+    }
   });
 
   socket.on("disconnect", () => {
     console.log(`Player disconnected: ${socket.id}`);
-    delete players[socket.id];
-    io.emit("playerDisconnected", socket.id);
+    if (socket.roomName) {
+      const room = getRoom(socket.roomName);
+      if (room) {
+        delete room.players[socket.id];
+        io.to(socket.roomName).emit("playerDisconnected", socket.id);
+        emitGameStateChange(socket.roomName);
+
+        if (Object.keys(room.players).length === 0) {
+          deleteRoom(socket.roomName);
+        }
+      }
+    }
   });
 });
 
